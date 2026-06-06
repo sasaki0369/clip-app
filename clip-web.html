@@ -222,6 +222,16 @@
     min-height: 22px; max-height: 120px; overflow-y: auto;
   }
   .paste-area::placeholder { color: var(--muted); }
+  .clip-btn {
+    width: 32px; height: 32px; flex-shrink: 0;
+    background: var(--surface); color: var(--muted2);
+    border: 1px solid var(--border); border-radius: 8px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.15s;
+  }
+  .clip-btn:hover { background: var(--surface2); color: var(--text); border-color: var(--border2); }
+  .clip-btn:active { transform: scale(0.94); }
   .send-btn {
     width: 32px; height: 32px; flex-shrink: 0;
     background: var(--text); color: #fff; border: none; border-radius: 8px;
@@ -392,6 +402,14 @@
         placeholder="ここに貼り付け… (Ctrl+V / ⌘V)" rows="1"
         oninput="onTextareaInput(this)"
         onkeydown="onTextareaKey(event)"></textarea>
+      <button class="clip-btn" id="clip-btn" onclick="pasteFromClipboard()" title="クリップボードから取得">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="8" y="2" width="8" height="4" rx="1.5"/>
+          <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
+          <line x1="9" y1="12" x2="15" y2="12"/>
+          <line x1="9" y1="16" x2="15" y2="16"/>
+        </svg>
+      </button>
       <button class="send-btn" id="send-btn" onclick="submitPaste()" disabled>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
           <path d="M12 19V5M5 12l7-7 7 7"/>
@@ -503,6 +521,23 @@ function mergeSelected() {
   const merged = selected.map(id=>(items.find(i=>i.id===id)||{}).text||'').join('\n');
   navigator.clipboard.writeText(merged).then(() => {
     toast(`${selected.length}件を統合してコピー`); clearSelect();
+  });
+}
+
+// ── クリップボードから直接取得（ボタン押下）────────────────────────────────
+function pasteFromClipboard() {
+  navigator.clipboard.readText().then(text => {
+    if (!text.trim()) { toast('クリップボードが空です'); return; }
+    const el = document.getElementById('paste-area');
+    el.value = text;
+    onTextareaInput(el);
+    el.focus();
+    toast('クリップボードから取得しました');
+  }).catch(() => {
+    // 権限がない場合はテキストエリアにフォーカスして手動貼り付けを促す
+    const el = document.getElementById('paste-area');
+    el.focus();
+    toast('テキストエリアをタップして長押し→貼り付け');
   });
 }
 
