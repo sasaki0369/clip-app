@@ -347,42 +347,45 @@ function confirmTab(tab){
   if(pendingText){ addItem(pendingText, tab); pendingText=null; }
 }
 
-// ── Copy ──────────────────────────────────────────────────────────────────────
-async function copyItem(id){
-  const item=items.find(i=>i.id===id); if(!item) return;
-  // クリップボードにコピー
+// ── Copy（text基準） ──────────────────────────────────────────────────────────
+async function copyItemByText(text){
+  const item=items.find(i=>i.text===text); if(!item) return;
   try {
     await navigator.clipboard.writeText(item.text);
   } catch(e) {
-    // フォールバック
     const ta=document.createElement('textarea');
     ta.value=item.text; document.body.appendChild(ta); ta.select();
     document.execCommand('copy'); document.body.removeChild(ta);
   }
-  // ローカル即時更新
   item.copies++; item.lastUsed=now();
-  renderList();
-  toast('コピーしました');
-  // Firebaseに書き込み（リスナーで全端末に反映）
-  const key = await textToKey(item.text);
-  db.ref('clips/'+key).update({copies:item.copies, lastUsed:item.lastUsed});
+  renderList(); toast('コピーしました');
+  const key=await textToKey(item.text);
+  db.ref('clips/'+key).update({copies:item.copies,lastUsed:item.lastUsed});
+}
+// 旧関数（互換性のため残す）
+async function copyItem(id){
+  const item=items.find(i=>i.id===id||i.text===id); if(!item) return;
+  await copyItemByText(item.text);
 }
 
+
 // ── Delete ────────────────────────────────────────────────────────────────────
-function deleteItem(id){
-  const item=items.find(i=>i.id===id); if(!item) return;
-  confirm2('削除の確認',
-    '"'+item.text.slice(0,40)+(item.text.length>40?'…':'')+'" を削除しますか？',
+async function deleteItemByText(text){
+  const item=items.find(i=>i.text===text); if(!item) return;
+  const preview=text.slice(0,40)+(text.length>40?'...':'');
+  confirm2('削除の確認', '"'+preview+'" を削除しますか？',
     async ()=>{
-      // ローカル即時削除
-      items=items.filter(i=>i.id!==id);
-      selected=selected.filter(s=>s!==id);
+      items=items.filter(i=>i.text!==text);
+      selected=selected.filter(s=>s!==text);
       updateSelectBar(); renderList(); toast('削除しました');
-      // Firebaseから削除
-      const key=await textToKey(item.text);
+      const key=await textToKey(text);
       db.ref('clips/'+key).remove();
     }
   );
+}
+function deleteItem(id){
+  const item=items.find(i=>i.text===id||i.id===id);
+  if(item) deleteItemByText(item.text);
 }
 
 // ── Change Tab ────────────────────────────────────────────────────────────────
@@ -398,19 +401,33 @@ function changeTab(id){
   ).join('');
   showSheet('タブを変更', btns);
 }
-async function doChangeTab(id,tab){
-  const item=items.find(i=>i.id===id); if(!item) return;
-  // ローカル即時更新
+async function changeTabByText(text){
+  const tab=await new Promise(resolve=>{
+    const tabs=settings.tabs;
+    const btns=tabs.map(t=>`<button class="mbtn tab-pick-btn" onclick="window._resolveTab('${esc(t)}')">${esc(t)}</button>`).join('');
+    window._resolveTab=(t)=>{ closeModal(); resolve(t); };
+    showSheet('タブを変更',btns);
+  });
+  const item=items.find(i=>i.text===text); if(!item) return;
   item.tab=tab; renderList(); toast('「'+tab+'」に移動しました');
-  // Firebase更新
+  const key=await textToKey(text);
+  db.ref('clips/'+key).update({tab});
+}
+async function doChangeTab(id,tab){
+  const item=items.find(i=>i.id===id||i.text===id); if(!item) return;
+  item.tab=tab; renderList(); toast('「'+tab+'」に移動しました');
   const key=await textToKey(item.text);
   db.ref('clips/'+key).update({tab});
 }
 
 // ── Select ────────────────────────────────────────────────────────────────────
-function toggleSelect(id){
-  if(selected.includes(id)) selected=selected.filter(s=>s!==id); else selected.push(id);
+function toggleSelectByText(text){
+  if(selected.includes(text)) selected=selected.filter(s=>s!==text); else selected.push(text);
   updateSelectBar(); renderList();
+}
+function toggleSelect(id){
+  const item=items.find(i=>i.id===id||i.text===id);
+  if(item) toggleSelectByText(item.text);
 }
 function clearSelect(){ selected=[]; updateSelectBar(); renderList(); }
 function updateSelectBar(){
@@ -421,7 +438,7 @@ function updateSelectBar(){
   lbl.textContent=selected.length+'件選択中';
 }
 async function mergeSelected(){
-  const merged=selected.map(id=>(items.find(i=>i.id===id)||{}).text||'').join('\n');
+  const merged=selected.map(text=>(items.find(i=>i.text===text)||{}).text||'').join('\n');
   try {
     await navigator.clipboard.writeText(merged);
   } catch(e) {
@@ -497,14 +514,16 @@ function renderList(){
     </div>`;
     return;
   }
-  list.innerHTML=display.map(item=>{
-    const isSel=selected.includes(item.id);
-    const si=selected.indexOf(item.id);
-    return `<div class="card ${isSel?'selected':''}" id="c-${item.id}">
+  // textをキー（idは使わない）
+  list.innerHTML=display.map((item,idx)=>{
+    const t=encodeURIComponent(item.text);
+    const isSel=selected.includes(item.text);
+    const si=selected.indexOf(item.text);
+    return `<div class="card ${isSel?'selected':''}" data-idx="${idx}">
       <div class="card-body">
         <div class="card-text">${esc(trunc(item.text))}</div>
         <div class="card-meta">
-          <span class="tab-badge" onclick="event.stopPropagation();changeTab('${item.id}')">${esc(item.tab)}</span>
+          <span class="tab-badge" onclick="event.stopPropagation();changeTabByText(decodeURIComponent('${t}'))">${esc(item.tab)}</span>
           <span class="meta-date">${fmtDate(item.lastUsed)}</span>
           <span class="meta-copies">×${item.copies}</span>
         </div>
@@ -512,7 +531,7 @@ function renderList(){
       <div class="card-actions">
         ${isSel
           ?`<div class="sel-num">${si+1}</div>`
-          :`<button class="del-btn" onclick="event.stopPropagation();deleteItem('${item.id}')">
+          :`<button class="del-btn" onclick="event.stopPropagation();deleteItemByText(decodeURIComponent('${t}'))">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M18 6 6 18M6 6l12 12"/>
               </svg></button>`
@@ -521,12 +540,16 @@ function renderList(){
     </div>`;
   }).join('');
 
-  display.forEach(item=>{
-    const card=document.getElementById('c-'+item.id); if(!card) return;
-    card.addEventListener('pointerdown',()=>{longTimer=setTimeout(()=>toggleSelect(item.id),500);});
+  display.forEach((item,idx)=>{
+    const card=document.querySelector(`.card[data-idx="${idx}"]`); if(!card) return;
+    card.addEventListener('pointerdown',()=>{longTimer=setTimeout(()=>toggleSelectByText(item.text),500);});
     card.addEventListener('pointerup',  ()=>clearTimeout(longTimer));
     card.addEventListener('pointerleave',()=>clearTimeout(longTimer));
-    card.addEventListener('click',async ()=>{ if(selected.length>0) toggleSelect(item.id); else await copyItem(item.id); });
+    card.addEventListener('click',async(e)=>{
+      if(e.target.closest('.del-btn')||e.target.closest('.tab-badge')) return;
+      if(selected.length>0) toggleSelectByText(item.text);
+      else await copyItemByText(item.text);
+    });
   });
 }
 
@@ -653,8 +676,9 @@ function addTab(){
 }
 function clearAll(){
   confirm2('すべて削除','すべてのクリップを削除します。この操作は元に戻せません。',async ()=>{
-    for(const i of items){ const key=await textToKey(i.text); db.ref('clips/'+key).remove(); }
-    closeModal(); toast('削除しました');
+    const texts=[...items.map(i=>i.text)];
+    items=[]; selected=[]; updateSelectBar(); renderList(); closeModal(); toast('削除しました');
+    for(const t of texts){ const key=await textToKey(t); db.ref('clips/'+key).remove(); }
   });
 }
 
