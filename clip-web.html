@@ -231,13 +231,20 @@ const esc   = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&g
 const trunc = (t, n=200) => t.length > n ? t.slice(0,n)+'…' : t;
 
 function fmtDate(ms) {
-  const d    = Math.floor((now()-ms)/86400000);
-  const time = new Date(ms).toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'});
-  const date = new Date(ms).toLocaleDateString('ja-JP',{month:'numeric',day:'numeric'});
-  if (d===0) return date+' '+time;
-  if (d===1) return '昨日 '+time;
-  if (d<7)   return d+'日前 '+time;
-  return new Date(ms).toLocaleDateString('ja-JP',{month:'short',day:'numeric'});
+  const now2  = new Date();
+  const target = new Date(ms);
+  const time = target.toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'});
+  const date = target.toLocaleDateString('ja-JP',{month:'numeric',day:'numeric'});
+  // 日付を日本時間でYYYY-MM-DD形式で比較
+  const toDay = d => d.toLocaleDateString('ja-JP',{year:'numeric',month:'2-digit',day:'2-digit'});
+  const todayStr    = toDay(now2);
+  const targetStr   = toDay(target);
+  const yesterdayStr = toDay(new Date(now2.getTime() - 86400000));
+  const diffDays = Math.floor((now2 - target) / 86400000);
+  if (targetStr === todayStr)      return date + ' ' + time;
+  if (targetStr === yesterdayStr)  return '昨日 ' + time;
+  if (diffDays < 7)                return diffDays + '日前 ' + time;
+  return target.toLocaleDateString('ja-JP',{month:'short',day:'numeric'});
 }
 
 // SHA-256ハッシュ→32文字キー（Promiseを返す）
@@ -267,9 +274,7 @@ fdb.ref('deleted').once('value', function(delSnap) {
       if (deletedKeys.has(child.key)) return;
       const r = child.val();
       if (!r || !r.text || !r.lastUsed || r.lastUsed < cut) return;
-      const local = items.find(l => l.text === r.text);
-      if (local && local.lastUsed >= r.lastUsed) next.push(local);
-      else next.push(r);
+      next.push(r); // Firebaseを常にsource of truth
     });
     items = next;
     setSyncStatus('on');
