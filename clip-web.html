@@ -313,11 +313,18 @@ async function addItem(text, tab){
   const ex=items.find(i=>i.text===t);
   const key = await textToKey(t);
   if(ex){
-    const data={copies:ex.copies+1,lastUsed:now()};
-    db.ref('clips/'+key).update(data);
+    // ローカル即時更新
+    ex.copies++; ex.lastUsed=now();
+    renderList();
+    // Firebase更新
+    db.ref('clips/'+key).update({copies:ex.copies, lastUsed:ex.lastUsed});
   } else {
-    const item={text:t,tab:tab||settings.tabs[0]||'未分類',copies:1,createdAt:now(),lastUsed:now()};
-    db.ref('clips/'+key).set(item);
+    const item={id:key, text:t, tab:tab||settings.tabs[0]||'未分類', copies:1, createdAt:now(), lastUsed:now()};
+    // ローカル即時追加
+    items.unshift(item); renderList();
+    // Firebase書き込み
+    const {id:_, ...fbItem} = item;
+    db.ref('clips/'+key).set(fbItem);
   }
   toast('追加しました');
 }
@@ -343,11 +350,22 @@ function confirmTab(tab){
 // ── Copy ──────────────────────────────────────────────────────────────────────
 async function copyItem(id){
   const item=items.find(i=>i.id===id); if(!item) return;
-  navigator.clipboard.writeText(item.text).then(async ()=>{
-    const key = await textToKey(item.text);
-    db.ref('clips/'+key).update({copies:item.copies+1,lastUsed:now()});
-    toast('コピーしました');
-  });
+  // クリップボードにコピー
+  try {
+    await navigator.clipboard.writeText(item.text);
+  } catch(e) {
+    // フォールバック
+    const ta=document.createElement('textarea');
+    ta.value=item.text; document.body.appendChild(ta); ta.select();
+    document.execCommand('copy'); document.body.removeChild(ta);
+  }
+  // ローカル即時更新
+  item.copies++; item.lastUsed=now();
+  renderList();
+  toast('コピーしました');
+  // Firebaseに書き込み（リスナーで全端末に反映）
+  const key = await textToKey(item.text);
+  db.ref('clips/'+key).update({copies:item.copies, lastUsed:item.lastUsed});
 }
 
 // ── Delete ────────────────────────────────────────────────────────────────────
@@ -355,7 +373,15 @@ function deleteItem(id){
   const item=items.find(i=>i.id===id); if(!item) return;
   confirm2('削除の確認',
     '"'+item.text.slice(0,40)+(item.text.length>40?'…':'')+'" を削除しますか？',
-    async ()=>{ const key=await textToKey(item.text); db.ref('clips/'+key).remove(); selected=selected.filter(s=>s!==id); updateSelectBar(); toast('削除しました'); }
+    async ()=>{
+      // ローカル即時削除
+      items=items.filter(i=>i.id!==id);
+      selected=selected.filter(s=>s!==id);
+      updateSelectBar(); renderList(); toast('削除しました');
+      // Firebaseから削除
+      const key=await textToKey(item.text);
+      db.ref('clips/'+key).remove();
+    }
   );
 }
 
@@ -374,7 +400,11 @@ function changeTab(id){
 }
 async function doChangeTab(id,tab){
   const item=items.find(i=>i.id===id); if(!item) return;
-  const key=await textToKey(item.text); db.ref('clips/'+key).update({tab}); toast('「'+tab+'」に移動しました');
+  // ローカル即時更新
+  item.tab=tab; renderList(); toast('「'+tab+'」に移動しました');
+  // Firebase更新
+  const key=await textToKey(item.text);
+  db.ref('clips/'+key).update({tab});
 }
 
 // ── Select ────────────────────────────────────────────────────────────────────
@@ -390,11 +420,16 @@ function updateSelectBar(){
   bar.classList.remove('hidden');
   lbl.textContent=selected.length+'件選択中';
 }
-function mergeSelected(){
+async function mergeSelected(){
   const merged=selected.map(id=>(items.find(i=>i.id===id)||{}).text||'').join('\n');
-  navigator.clipboard.writeText(merged).then(()=>{
-    toast(selected.length+'件を統合してコピー'); clearSelect();
-  });
+  try {
+    await navigator.clipboard.writeText(merged);
+  } catch(e) {
+    const ta=document.createElement('textarea');
+    ta.value=merged; document.body.appendChild(ta); ta.select();
+    document.execCommand('copy'); document.body.removeChild(ta);
+  }
+  toast(selected.length+'件を統合してコピー'); clearSelect();
 }
 
 // ── Clipboard ─────────────────────────────────────────────────────────────────
@@ -491,7 +526,7 @@ function renderList(){
     card.addEventListener('pointerdown',()=>{longTimer=setTimeout(()=>toggleSelect(item.id),500);});
     card.addEventListener('pointerup',  ()=>clearTimeout(longTimer));
     card.addEventListener('pointerleave',()=>clearTimeout(longTimer));
-    card.addEventListener('click',()=>{ if(selected.length>0) toggleSelect(item.id); else copyItem(item.id); });
+    card.addEventListener('click',async ()=>{ if(selected.length>0) toggleSelect(item.id); else await copyItem(item.id); });
   });
 }
 
