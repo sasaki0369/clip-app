@@ -61,6 +61,7 @@
   .meta-copies{font-size:11px;color:var(--muted);font-family:var(--m);margin-left:auto}
   .card-actions{display:flex;align-items:center;gap:4px;opacity:0;transition:opacity .12s}
   .card:hover .card-actions,.card.selected .card-actions{opacity:1}
+  @media(hover:none){.card-actions{opacity:1}}
   .sel-num{width:20px;height:20px;border-radius:50%;background:var(--text);color:#fff;font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:center}
   .del-btn{width:32px;height:32px;background:rgba(0,0,0,.04);border:1px solid var(--border);border-radius:8px;cursor:pointer;color:var(--muted2);display:flex;align-items:center;justify-content:center;transition:all .12s;flex-shrink:0}
   .del-btn:hover{background:rgba(220,38,38,.1);color:var(--red);border-color:rgba(220,38,38,.25)}
