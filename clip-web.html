@@ -249,10 +249,17 @@ function setSyncStatus(s){
 // ── Firebase リアルタイム監視 ──────────────────────────────────────────────────
 db.ref('clips').on('value', snap=>{
   const data=snap.val();
-  // Firebaseからの全データをitemsに反映（textキーで識別）
   const remote = data ? Object.values(data) : [];
   const cut = now() - settings.retentionDays*86400000;
-  items = remote.filter(i=>i.text && i.lastUsed>=cut);
+  // ローカルの楽観的更新を保持：リモートより新しいローカル値を優先
+  const merged = remote
+    .filter(i=>i.text && i.lastUsed>=cut)
+    .map(r=>{
+      const local = items.find(l=>l.text===r.text);
+      if(local && local.lastUsed >= r.lastUsed) return local; // ローカルが新しければ優先
+      return r;
+    });
+  items = merged;
   setSyncStatus('on');
   renderList();
 }, err=>{
@@ -291,9 +298,12 @@ async function addItem(text, tab){
   const ex=items.find(i=>i.text===t);
   if(ex){
     ex.copies++; ex.lastUsed=now();
+    renderList();
     db.ref('clips/'+key).update({copies:ex.copies, lastUsed:ex.lastUsed});
   } else {
     const item={text:t, tab:tab||settings.tabs[0]||'未分類', copies:1, createdAt:now(), lastUsed:now()};
+    items.unshift(item); // ローカル即時追加
+    renderList();
     db.ref('clips/'+key).set(item);
   }
   toast('追加しました');
@@ -302,13 +312,15 @@ async function addItem(text, tab){
 // ── タブ選択して保存 ──────────────────────────────────────────────────────────
 function pickTabAndSave(text){
   pendingText=text;
-  const btns=settings.tabs.map(t=>
-    `<button class="mbtn tab-pick-btn" onclick="confirmTab('${esc(t)}')">${esc(t)}</button>`
-  ).join('');
+  const btns=settings.tabs.map(t=>{
+    const tb64=btoa(unescape(encodeURIComponent(t)));
+    return `<button class="mbtn tab-pick-btn" onclick="confirmTabB64('${tb64}')">${esc(t)}</button>`;
+  }).join('');
   showSheet('タブを選択して保存', btns);
 }
-function confirmTab(tab){
+function confirmTabB64(tb64){
   closeModal();
+  const tab=decodeURIComponent(escape(atob(tb64)));
   if(pendingText){ addItem(pendingText, tab); pendingText=null; }
 }
 
@@ -350,17 +362,23 @@ async function deleteItemByText(text){
 // ── Tab Change ────────────────────────────────────────────────────────────────
 function changeTabByText(text){
   const item=items.find(i=>i.text===text); if(!item) return;
-  const btns=settings.tabs.map(t=>
-    `<button class="mbtn tab-pick-btn" onclick="doChangeTabByText('${esc(text)}','${esc(t)}');closeModal()">${esc(t)}</button>`
-  ).join('');
+  const b64=btoa(unescape(encodeURIComponent(text)));
+  const btns=settings.tabs.map(t=>{
+    const tb64=btoa(unescape(encodeURIComponent(t)));
+    return `<button class="mbtn tab-pick-btn" onclick="doChangeTabB64('${b64}','${tb64}')">${esc(t)}</button>`;
+  }).join('');
   showSheet('タブを変更', btns);
 }
-async function doChangeTabByText(text, tab){
+async function doChangeTabB64(b64text, b64tab){
+  closeModal();
+  const text=decodeURIComponent(escape(atob(b64text)));
+  const tab=decodeURIComponent(escape(atob(b64tab)));
   const item=items.find(i=>i.text===text); if(!item) return;
   item.tab=tab; renderList(); toast('「'+tab+'」に移動しました');
   const key=await textToKey(text);
   db.ref('clips/'+key).update({tab});
 }
+
 
 // ── Select ────────────────────────────────────────────────────────────────────
 function toggleSelectByText(text){
