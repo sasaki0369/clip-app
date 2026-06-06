@@ -274,14 +274,26 @@ db.ref('clips').on('value', snap=>{
   toast('DB接続エラー');
 });
 
+// ── MD5キー生成 ──────────────────────────────────────────────────────────────
+async function textToKey(text){
+  const encoder = new TextEncoder();
+  const data = encoder.encode(text);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b=>b.toString(16).padStart(2,'0')).join('').slice(0,32);
+}
+
 // ── Add ───────────────────────────────────────────────────────────────────────
-function addItem(text, tab){
+async function addItem(text, tab){
   const t=text.trim(); if(!t) return;
   const ex=items.find(i=>i.text===t);
+  const key = await textToKey(t);
   if(ex){
-    fbUpdate(ex.id,{copies:ex.copies+1,lastUsed:now()});
+    const data={copies:ex.copies+1,lastUsed:now()};
+    db.ref('clips/'+key).update(data);
   } else {
-    fbSave({id:uid(),text:t,tab:tab||settings.tabs[0]||'未分類',copies:1,createdAt:now(),lastUsed:now()});
+    const item={text:t,tab:tab||settings.tabs[0]||'未分類',copies:1,createdAt:now(),lastUsed:now()};
+    db.ref('clips/'+key).set(item);
   }
   toast('追加しました');
 }
@@ -305,10 +317,11 @@ function confirmTab(tab){
 }
 
 // ── Copy ──────────────────────────────────────────────────────────────────────
-function copyItem(id){
+async function copyItem(id){
   const item=items.find(i=>i.id===id); if(!item) return;
-  navigator.clipboard.writeText(item.text).then(()=>{
-    fbUpdate(id,{copies:item.copies+1,lastUsed:now()});
+  navigator.clipboard.writeText(item.text).then(async ()=>{
+    const key = await textToKey(item.text);
+    db.ref('clips/'+key).update({copies:item.copies+1,lastUsed:now()});
     toast('コピーしました');
   });
 }
@@ -318,7 +331,7 @@ function deleteItem(id){
   const item=items.find(i=>i.id===id); if(!item) return;
   confirm2('削除の確認',
     '"'+item.text.slice(0,40)+(item.text.length>40?'…':'')+'" を削除しますか？',
-    ()=>{ fbDelete(id); selected=selected.filter(s=>s!==id); updateSelectBar(); toast('削除しました'); }
+    async ()=>{ const key=await textToKey(item.text); db.ref('clips/'+key).remove(); selected=selected.filter(s=>s!==id); updateSelectBar(); toast('削除しました'); }
   );
 }
 
@@ -335,8 +348,9 @@ function changeTab(id){
   ).join('');
   showSheet('タブを変更', btns);
 }
-function doChangeTab(id,tab){
-  fbUpdate(id,{tab}); toast('「'+tab+'」に移動しました');
+async function doChangeTab(id,tab){
+  const item=items.find(i=>i.id===id); if(!item) return;
+  const key=await textToKey(item.text); db.ref('clips/'+key).update({tab}); toast('「'+tab+'」に移動しました');
 }
 
 // ── Select ────────────────────────────────────────────────────────────────────
@@ -579,8 +593,9 @@ function addTab(){
   settings.tabs.push(name); saveSettings(); showSettings(); renderTabs();
 }
 function clearAll(){
-  confirm2('すべて削除','すべてのクリップを削除します。この操作は元に戻せません。',()=>{
-    items.forEach(i=>fbDelete(i.id)); closeModal(); toast('削除しました');
+  confirm2('すべて削除','すべてのクリップを削除します。この操作は元に戻せません。',async ()=>{
+    for(const i of items){ const key=await textToKey(i.text); db.ref('clips/'+key).remove(); }
+    closeModal(); toast('削除しました');
   });
 }
 
