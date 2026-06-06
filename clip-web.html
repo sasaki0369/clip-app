@@ -192,7 +192,7 @@
 <div id="toast"></div>
 
 <script>
-// ── Firebase初期化（compat版） ─────────────────────────────────────────────────
+// ── Firebase compat初期化 ─────────────────────────────────────────────────────
 firebase.initializeApp({
   apiKey: "AIzaSyCxWX1r95IrfTIZXQZvWtzzn7CM6Ps9oLQ",
   authDomain: "clip-app2.firebaseapp.com",
@@ -202,537 +202,503 @@ firebase.initializeApp({
   messagingSenderId: "331437837783",
   appId: "1:331437837783:web:2a69acac7423eb79440f92"
 });
-const db = firebase.database();
+const fdb = firebase.database();
 
 // ── State ─────────────────────────────────────────────────────────────────────
-const SK = 'clip_settings_v3';
+const SKEY = 'clip_settings_v4';
 let items    = [];
-let settings = { retentionDays:30, tabs:['仕事','メモ','URL','コード'] };
+let settings = { retentionDays: 30, tabs: ['仕事','メモ','URL','コード'] };
 let activeTab = 'すべて';
-let selected  = []; // text の配列
+let selected  = []; // textの配列
 let longTimer = null;
 let pendingText = null;
-const deletedKeys = new Set(); // 削除済みキーを記録（Firebaseが戻してくるのを防ぐ）
+const deletedKeys = new Set();
+let ignoreSettingsUpdate = false;
 
-function loadSettings(){
-  try{ settings={...settings,...JSON.parse(localStorage.getItem(SK)||'{}')}; }catch{}
+function loadSettings() {
+  try { settings = {...settings, ...JSON.parse(localStorage.getItem(SKEY)||'{}')}; } catch(e){}
 }
-function saveSettings(){ localStorage.setItem(SK,JSON.stringify(settings)); }
+function saveSettings() {
+  localStorage.setItem(SKEY, JSON.stringify(settings));
+}
 
 // ── Utils ─────────────────────────────────────────────────────────────────────
-const now   = ()=>Date.now();
-const esc   = s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-const trunc = (t,n=200)=>t.length>n?t.slice(0,n)+'…':t;
+const now   = () => Date.now();
+const esc   = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const trunc = (t, n=200) => t.length > n ? t.slice(0,n)+'…' : t;
 
-function fmtDate(ms){
-  const d=Math.floor((now()-ms)/86400000);
-  if(d===0) return new Date(ms).toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'});
-  if(d===1) return '昨日';
-  if(d<7)   return d+'日前';
+function fmtDate(ms) {
+  const d = Math.floor((now()-ms)/86400000);
+  if (d===0) return new Date(ms).toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'});
+  if (d===1) return '昨日';
+  if (d<7)   return d+'日前';
   return new Date(ms).toLocaleDateString('ja-JP',{month:'short',day:'numeric'});
 }
 
-// textをSHA-256ハッシュに変換してFirebaseキーにする
-async function textToKey(text){
-  const encoder = new TextEncoder();
-  const data = encoder.encode(text);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b=>b.toString(16).padStart(2,'0')).join('').slice(0,32);
-}
-
-// ── 同期ドット ────────────────────────────────────────────────────────────────
-function setSyncStatus(s){
-  const dot=document.getElementById('sync-dot');
-  dot.className='sync-dot '+(s==='on'?'on':s==='busy'?'busy':'err');
-}
-
-// ── Firebase リアルタイム監視 ──────────────────────────────────────────────────
-// ── 起動時に削除済みキーをFirebaseから読み込む ────────────────────────────────
-db.ref('deleted').once('value', snap=>{
-  const data=snap.val()||{};
-  Object.keys(data).forEach(k=>deletedKeys.add(k));
-});
-
-db.ref('clips').on('value', snap=>{
-  const data=snap.val();
-  const remote = data ? Object.values(data) : [];
-  const cut = now() - settings.retentionDays*86400000;
-  // 非同期不要：textToKeyを使わずdeletedKeysはキー名で管理
-  // Firebaseのキー名がハッシュなのでchild.keyで直接比較
-  applyRemoteData(snap);
-}, err=>{
-  setSyncStatus('err');
-  toast('DB接続エラー: '+err.message);
-});
-
-// clips onValueから呼ぶ処理（同期的に実行）
-function applyRemoteData(snap){
-  const cut = now() - settings.retentionDays*86400000;
-  const merged = [];
-  snap.children.forEach(child=>{
-    // 削除済みキーはスキップ
-    if(deletedKeys.has(child.key)) return;
-    const r = child.val();
-    if(!r || !r.text || r.lastUsed < cut) return;
-    // ローカルが新しければローカル優先
-    const local = items.find(l=>l.text===r.text);
-    if(local && local.lastUsed >= r.lastUsed) merged.push(local);
-    else merged.push(r);
+// SHA-256ハッシュ→32文字キー（Promiseを返す）
+function textToKey(text) {
+  const enc = new TextEncoder();
+  return crypto.subtle.digest('SHA-256', enc.encode(text)).then(buf => {
+    return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('').slice(0,32);
   });
-  items = merged;
-  setSyncStatus('on');
-  renderList();
 }
 
-// ── Firebase設定同期 ──────────────────────────────────────────────────────────
-let ignoreSettingsUpdate = false;
-db.ref('app_settings').on('value', snap=>{
-  if(ignoreSettingsUpdate) return;
-  const data=snap.val();
-  if(!data) return;
+// ── 同期ドット ─────────────────────────────────────────────────────────────────
+function setSyncStatus(s) {
+  const dot = document.getElementById('sync-dot');
+  if (dot) dot.className = 'sync-dot ' + s;
+}
+
+// ── Firebase初期化（削除済みキーを先に読んでからclipsを監視） ─────────────────
+fdb.ref('deleted').once('value', function(delSnap) {
+  const delData = delSnap.val() || {};
+  Object.keys(delData).forEach(k => deletedKeys.add(k));
+
+  // clips監視開始
+  fdb.ref('clips').on('value', function(snap) {
+    const cut = now() - settings.retentionDays * 86400000;
+    const next = [];
+    snap.forEach(function(child) {
+      if (deletedKeys.has(child.key)) return;
+      const r = child.val();
+      if (!r || !r.text || !r.lastUsed || r.lastUsed < cut) return;
+      const local = items.find(l => l.text === r.text);
+      if (local && local.lastUsed >= r.lastUsed) next.push(local);
+      else next.push(r);
+    });
+    items = next;
+    setSyncStatus('on');
+    renderList();
+  }, function(err) {
+    setSyncStatus('err');
+    toast('接続エラー: ' + err.message);
+  });
+});
+
+// 設定監視
+fdb.ref('app_settings').on('value', function(snap) {
+  if (ignoreSettingsUpdate) return;
+  const data = snap.val();
+  if (!data) return;
   const remoteTabs = Array.isArray(data.tabs) ? data.tabs : [];
   const remoteDays = Number(data.retentionDays) || 30;
-  if(remoteTabs.length>0 && JSON.stringify(remoteTabs)!==JSON.stringify(settings.tabs)){
-    settings.tabs=remoteTabs;
+  if (remoteTabs.length > 0 && JSON.stringify(remoteTabs) !== JSON.stringify(settings.tabs)) {
+    settings.tabs = remoteTabs;
     saveSettings(); renderTabs();
   }
-  if(remoteDays!==settings.retentionDays){
-    settings.retentionDays=remoteDays;
+  if (remoteDays !== settings.retentionDays) {
+    settings.retentionDays = remoteDays;
     saveSettings();
   }
 });
 
-function pushSettingsToFirebase(){
-  ignoreSettingsUpdate=true;
-  db.ref('app_settings').set({tabs:settings.tabs, retentionDays:settings.retentionDays});
-  setTimeout(()=>{ ignoreSettingsUpdate=false; }, 3000);
+function pushSettings() {
+  ignoreSettingsUpdate = true;
+  fdb.ref('app_settings').set({ tabs: settings.tabs, retentionDays: settings.retentionDays });
+  setTimeout(function() { ignoreSettingsUpdate = false; }, 3000);
 }
 
 // ── Add ───────────────────────────────────────────────────────────────────────
-async function addItem(text, tab){
-  const t=text.trim(); if(!t) return;
-  const ex=items.find(i=>i.text===t);
-  textToKey(t).then(key=>{
-    if(ex){
-      ex.copies++; ex.lastUsed=now();
-      renderList();
-      db.ref('clips/'+key).update({copies:ex.copies, lastUsed:ex.lastUsed});
-    } else {
-      const item={text:t, tab:tab||settings.tabs[0]||'未分類', copies:1, createdAt:now(), lastUsed:now()};
-      items.unshift(item);
-      renderList();
-      db.ref('clips/'+key).set(item);
-    }
-  });
+function addItem(text, tab) {
+  const t = text.trim();
+  if (!t) return;
+  const ex = items.find(i => i.text === t);
+  if (ex) {
+    ex.copies++; ex.lastUsed = now();
+    renderList();
+    textToKey(t).then(function(key) {
+      fdb.ref('clips/'+key).update({ copies: ex.copies, lastUsed: ex.lastUsed });
+    });
+  } else {
+    const item = { text: t, tab: tab || settings.tabs[0] || '未分類', copies: 1, createdAt: now(), lastUsed: now() };
+    items.unshift(item); renderList();
+    textToKey(t).then(function(key) {
+      fdb.ref('clips/'+key).set(item);
+    });
+  }
   toast('追加しました');
 }
 
-// ── タブ選択して保存 ──────────────────────────────────────────────────────────
-function pickTabAndSave(text){
-  pendingText=text;
-  const btns=settings.tabs.map(t=>{
-    const tb64=btoa(unescape(encodeURIComponent(t)));
-    return `<button class="mbtn tab-pick-btn" onclick="confirmTabB64('${tb64}')">${esc(t)}</button>`;
+function pickTabAndSave(text) {
+  pendingText = text;
+  const btns = settings.tabs.map(function(t) {
+    const tb64 = btoa(unescape(encodeURIComponent(t)));
+    return '<button class="mbtn tab-pick-btn" onclick="confirmTabB64(''+tb64+'')">'+esc(t)+'</button>';
   }).join('');
   showSheet('タブを選択して保存', btns);
 }
-function confirmTabB64(tb64){
+function confirmTabB64(tb64) {
   closeModal();
-  const tab=decodeURIComponent(escape(atob(tb64)));
-  if(pendingText){ addItem(pendingText, tab); pendingText=null; }
+  const tab = decodeURIComponent(escape(atob(tb64)));
+  if (pendingText) { addItem(pendingText, tab); pendingText = null; }
 }
 
 // ── Copy ──────────────────────────────────────────────────────────────────────
-async function copyItemByText(text){
-  const item=items.find(i=>i.text===text); if(!item) return;
-  // クリップボードにコピー
-  try {
-    await navigator.clipboard.writeText(item.text);
-  } catch(e) {
-    const ta=document.createElement('textarea');
-    ta.value=item.text; document.body.appendChild(ta); ta.select();
-    document.execCommand('copy'); document.body.removeChild(ta);
+function copyItemByText(text) {
+  const item = items.find(i => i.text === text);
+  if (!item) return;
+  // コピー実行
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(item.text).catch(function() { fallbackCopy(item.text); });
+  } else {
+    fallbackCopy(item.text);
   }
   // ローカル即時更新
-  item.copies++; item.lastUsed=now();
-  renderList();
-  toast('コピーしました ✓');
+  item.copies++; item.lastUsed = now();
+  renderList(); toast('コピーしました ✓');
   // Firebase更新
-  textToKey(text).then(key=>{
-    db.ref('clips/'+key).update({copies:item.copies, lastUsed:item.lastUsed});
+  textToKey(text).then(function(key) {
+    fdb.ref('clips/'+key).update({ copies: item.copies, lastUsed: item.lastUsed });
   });
+}
+function fallbackCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text; document.body.appendChild(ta); ta.select();
+  document.execCommand('copy'); document.body.removeChild(ta);
 }
 
 // ── Delete ────────────────────────────────────────────────────────────────────
-async function deleteItemByText(text){
-  const item=items.find(i=>i.text===text); if(!item) return;
-  const preview=text.slice(0,40)+(text.length>40?'...':'');
-  confirm2('削除の確認', '"'+preview+'" を削除しますか？',
-    async ()=>{
-      // ローカルを即時更新
-      items=items.filter(i=>i.text!==text);
-      selected=selected.filter(s=>s!==text);
-      updateSelectBar(); renderList(); toast('削除しました');
-      // Firebaseから削除（async処理）
-      textToKey(text).then(key=>{
-        deletedKeys.add(key);
-        db.ref('deleted/'+key).set(now());
-        db.ref('clips/'+key).remove();
-      });
-    }
-  );
-}
-
-// ── Tab Change ────────────────────────────────────────────────────────────────
-function changeTabByText(text){
-  const item=items.find(i=>i.text===text); if(!item) return;
-  const b64=btoa(unescape(encodeURIComponent(text)));
-  const btns=settings.tabs.map(t=>{
-    const tb64=btoa(unescape(encodeURIComponent(t)));
-    return `<button class="mbtn tab-pick-btn" onclick="doChangeTabB64('${b64}','${tb64}')">${esc(t)}</button>`;
-  }).join('');
-  showSheet('タブを変更', btns);
-}
-function doChangeTabB64(b64text, b64tab){
-  closeModal();
-  const text=decodeURIComponent(escape(atob(b64text)));
-  const tab=decodeURIComponent(escape(atob(b64tab)));
-  const item=items.find(i=>i.text===text); if(!item) return;
-  item.tab=tab; renderList(); toast('「'+tab+'」に移動しました');
-  textToKey(text).then(key=>{ db.ref('clips/'+key).update({tab}); });
-}
-
-
-// ── Select ────────────────────────────────────────────────────────────────────
-function toggleSelectByText(text){
-  if(selected.includes(text)) selected=selected.filter(s=>s!==text);
-  else selected.push(text);
-  updateSelectBar(); renderList();
-}
-function clearSelect(){ selected=[]; updateSelectBar(); renderList(); }
-function updateSelectBar(){
-  const bar=document.getElementById('select-bar');
-  const lbl=document.getElementById('sel-label');
-  if(selected.length===0){bar.classList.add('hidden');return;}
-  bar.classList.remove('hidden');
-  lbl.textContent=selected.length+'件選択中';
-}
-async function mergeSelected(){
-  const merged=selected.map(text=>text).join('\n');
-  try {
-    await navigator.clipboard.writeText(merged);
-  } catch(e) {
-    const ta=document.createElement('textarea');
-    ta.value=merged; document.body.appendChild(ta); ta.select();
-    document.execCommand('copy'); document.body.removeChild(ta);
-  }
-  toast(selected.length+'件を統合してコピー ✓'); clearSelect();
-}
-
-// ── Clipboard ─────────────────────────────────────────────────────────────────
-function pasteFromClipboard(){
-  navigator.clipboard.readText().then(text=>{
-    if(!text.trim()){toast('クリップボードが空です');return;}
-    const el=document.getElementById('paste-area');
-    el.value=text; onTA(el); el.focus();
-    toast('取得しました');
-  }).catch(()=>{
-    document.getElementById('paste-area').focus();
-    toast('入力欄を長押し→貼り付け');
+function deleteItemByText(text) {
+  const item = items.find(i => i.text === text);
+  if (!item) return;
+  const preview = text.slice(0,40) + (text.length>40?'...':'');
+  confirm2('削除の確認', '"'+preview+'" を削除しますか？', function() {
+    items = items.filter(i => i.text !== text);
+    selected = selected.filter(s => s !== text);
+    updateSelectBar(); renderList(); toast('削除しました');
+    textToKey(text).then(function(key) {
+      deletedKeys.add(key);
+      fdb.ref('deleted/'+key).set(now());
+      fdb.ref('clips/'+key).remove();
+    });
   });
 }
 
+// ── Tab Change ────────────────────────────────────────────────────────────────
+function changeTabByText(text) {
+  const item = items.find(i => i.text === text);
+  if (!item) return;
+  const b64text = btoa(unescape(encodeURIComponent(text)));
+  const btns = settings.tabs.map(function(t) {
+    const tb64 = btoa(unescape(encodeURIComponent(t)));
+    return '<button class="mbtn tab-pick-btn" onclick="applyTabChange(''+b64text+'',''+tb64+'')">'+esc(t)+'</button>';
+  }).join('');
+  showSheet('タブを変更', btns);
+}
+function applyTabChange(b64text, tb64) {
+  closeModal();
+  const text = decodeURIComponent(escape(atob(b64text)));
+  const tab  = decodeURIComponent(escape(atob(tb64)));
+  const item = items.find(i => i.text === text);
+  if (!item) return;
+  item.tab = tab; renderList(); toast('「'+tab+'」に移動しました');
+  textToKey(text).then(function(key) { fdb.ref('clips/'+key).update({ tab: tab }); });
+}
+
+// ── Select ────────────────────────────────────────────────────────────────────
+function toggleSelectByText(text) {
+  if (selected.includes(text)) selected = selected.filter(s => s !== text);
+  else selected.push(text);
+  updateSelectBar(); renderList();
+}
+function clearSelect() { selected = []; updateSelectBar(); renderList(); }
+function updateSelectBar() {
+  const bar = document.getElementById('select-bar');
+  const lbl = document.getElementById('sel-label');
+  if (!bar) return;
+  if (selected.length === 0) { bar.classList.add('hidden'); return; }
+  bar.classList.remove('hidden');
+  if (lbl) lbl.textContent = selected.length + '件選択中';
+}
+function mergeSelected() {
+  const merged = selected.join('
+');
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(merged).catch(function() { fallbackCopy(merged); });
+  } else { fallbackCopy(merged); }
+  toast(selected.length + '件を統合してコピー ✓'); clearSelect();
+}
+
+// ── Clipboard ─────────────────────────────────────────────────────────────────
+function pasteFromClipboard() {
+  if (navigator.clipboard && navigator.clipboard.readText) {
+    navigator.clipboard.readText().then(function(text) {
+      if (!text.trim()) { toast('クリップボードが空です'); return; }
+      const el = document.getElementById('paste-area');
+      if (el) { el.value = text; onTA(el); el.focus(); }
+      toast('取得しました');
+    }).catch(function() {
+      const el = document.getElementById('paste-area');
+      if (el) el.focus();
+      toast('入力欄を長押し→貼り付け');
+    });
+  } else {
+    const el = document.getElementById('paste-area');
+    if (el) el.focus();
+    toast('入力欄を長押し→貼り付け');
+  }
+}
+
 // ── Textarea ──────────────────────────────────────────────────────────────────
-function onTA(el){
-  el.style.height='auto';
-  el.style.height=Math.min(el.scrollHeight,120)+'px';
-  const btn=document.getElementById('send-btn');
-  btn.disabled=!el.value.trim();
-  btn.classList.toggle('ready',!!el.value.trim());
+function onTA(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+  const btn = document.getElementById('send-btn');
+  if (!btn) return;
+  btn.disabled = !el.value.trim();
+  btn.classList.toggle('ready', !!el.value.trim());
 }
-function onTAKey(e){
-  if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();submitPaste();}
+function onTAKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitPaste(); }
 }
-function submitPaste(){
-  const el=document.getElementById('paste-area');
-  const text=el.value.trim(); if(!text) return;
-  el.value=''; onTA(el);
-  if(settings.tabs.length<=1){ addItem(text,settings.tabs[0]||'未分類'); return; }
+function submitPaste() {
+  const el = document.getElementById('paste-area');
+  if (!el) return;
+  const text = el.value.trim();
+  if (!text) return;
+  el.value = ''; onTA(el);
+  if (settings.tabs.length <= 1) { addItem(text, settings.tabs[0] || '未分類'); return; }
   pickTabAndSave(text);
 }
 
 // ── Render Tabs ───────────────────────────────────────────────────────────────
-function renderTabs(){
-  document.getElementById('tabs-row').innerHTML=
-    ['すべて',...settings.tabs].map(t=>
-      `<button class="tab-btn ${t===activeTab?'active':''}" onclick="switchTab('${esc(t)}')">${esc(t)}</button>`
-    ).join('');
+function renderTabs() {
+  const row = document.getElementById('tabs-row');
+  if (!row) return;
+  row.innerHTML = ['すべて'].concat(settings.tabs).map(function(t) {
+    return '<button class="tab-btn '+(t===activeTab?'active':'')+'" onclick="switchTab(''+esc(t)+'')">'+esc(t)+'</button>';
+  }).join('');
 }
-function switchTab(t){ activeTab=t; renderTabs(); renderList(); }
+function switchTab(t) { activeTab = t; renderTabs(); renderList(); }
 
 // ── Render List ───────────────────────────────────────────────────────────────
-function renderList(){
-  const q=document.getElementById('search').value.toLowerCase();
+function renderList() {
+  const q = (document.getElementById('search') || {value:''}).value.toLowerCase();
+  const display = items
+    .filter(function(i) { return activeTab === 'すべて' || i.tab === activeTab; })
+    .filter(function(i) { return !q || i.text.toLowerCase().includes(q); })
+    .sort(function(a,b) { return b.copies - a.copies || b.lastUsed - a.lastUsed; });
 
-  // フィルタ：すべてタブは activeTab==='すべて' で全件表示
-  let display = items
-    .filter(i=> activeTab==='すべて' || i.tab===activeTab)
-    .filter(i=> !q || i.text.toLowerCase().includes(q))
-    .sort((a,b)=>b.copies-a.copies||b.lastUsed-a.lastUsed);
+  const list = document.getElementById('list');
+  if (!list) return;
 
-  const list=document.getElementById('list');
-  if(display.length===0){
-    list.innerHTML=`<div class="empty">
-      <div class="empty-icon">
-        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
-          <rect x="8" y="2" width="8" height="4" rx="1.5"/>
-          <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
-          <line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="15" y2="16"/>
-        </svg>
-      </div>
-      <p class="empty-title">クリップはありません</p>
-      <p class="empty-sub">📋ボタンまたは入力欄にテキストを貼り付けて追加</p>
-    </div>`;
+  if (display.length === 0) {
+    list.innerHTML = '<div class="empty"><div class="empty-icon"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="8" y="2" width="8" height="4" rx="1.5"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="15" y2="16"/></svg></div><p class="empty-title">クリップはありません</p><p class="empty-sub">📋ボタンまたは入力欄にテキストを貼り付けて追加</p></div>';
     return;
   }
 
-  list.innerHTML=display.map((item,idx)=>{
-    const isSel=selected.includes(item.text);
-    const si=selected.indexOf(item.text);
-    // text をbase64エンコードしてHTML属性に安全に渡す
-    const b64=btoa(unescape(encodeURIComponent(item.text)));
-    return `<div class="card ${isSel?'selected':''}" data-idx="${idx}" data-b64="${b64}">
-      <div class="card-body">
-        <div class="card-text">${esc(trunc(item.text))}</div>
-        <div class="card-meta">
-          <span class="tab-badge" data-action="tab">${esc(item.tab)}</span>
-          <span class="meta-date">${fmtDate(item.lastUsed)}</span>
-          <span class="meta-copies">×${item.copies}</span>
-        </div>
-      </div>
-      <div class="card-actions">
-        ${isSel
-          ?`<div class="sel-num">${si+1}</div>`
-          :`<button class="del-btn" data-action="del">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M18 6 6 18M6 6l12 12"/>
-              </svg></button>`
-        }
-      </div>
-    </div>`;
+  list.innerHTML = display.map(function(item, idx) {
+    const isSel = selected.includes(item.text);
+    const si    = selected.indexOf(item.text);
+    const b64   = btoa(unescape(encodeURIComponent(item.text)));
+    return '<div class="card '+(isSel?'selected':'')+'" data-idx="'+idx+'" data-b64="'+b64+'">'
+      + '<div class="card-body">'
+      + '<div class="card-text">'+esc(trunc(item.text))+'</div>'
+      + '<div class="card-meta">'
+      + '<span class="tab-badge" data-action="tab">'+esc(item.tab)+'</span>'
+      + '<span class="meta-date">'+fmtDate(item.lastUsed)+'</span>'
+      + '<span class="meta-copies">×'+item.copies+'</span>'
+      + '</div></div>'
+      + '<div class="card-actions">'
+      + (isSel
+        ? '<div class="sel-num">'+(si+1)+'</div>'
+        : '<button class="del-btn" data-action="del"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button>')
+      + '</div></div>';
   }).join('');
 
-  // イベントを data-b64 で一元管理
-  list.querySelectorAll('.card').forEach(card=>{
-    const b64=card.dataset.b64;
-    const text=decodeURIComponent(escape(atob(b64)));
+  // イベントをdata-b64で一元管理（onclick属性を使わない）
+  list.querySelectorAll('.card').forEach(function(card) {
+    const b64  = card.dataset.b64;
+    const text = decodeURIComponent(escape(atob(b64)));
 
-    card.addEventListener('pointerdown',()=>{
-      longTimer=setTimeout(()=>toggleSelectByText(text),500);
+    card.addEventListener('pointerdown', function() {
+      longTimer = setTimeout(function() { toggleSelectByText(text); }, 500);
     });
-    card.addEventListener('pointerup',  ()=>clearTimeout(longTimer));
-    card.addEventListener('pointerleave',()=>clearTimeout(longTimer));
+    card.addEventListener('pointerup',    function() { clearTimeout(longTimer); });
+    card.addEventListener('pointerleave', function() { clearTimeout(longTimer); });
 
-    card.addEventListener('click', async e=>{
-      if(e.target.closest('[data-action="del"]')){
+    card.addEventListener('click', function(e) {
+      if (e.target.closest('[data-action="del"]')) {
         e.stopPropagation(); deleteItemByText(text); return;
       }
-      if(e.target.closest('[data-action="tab"]')){
+      if (e.target.closest('[data-action="tab"]')) {
         e.stopPropagation(); changeTabByText(text); return;
       }
-      if(selected.length>0) toggleSelectByText(text);
-      else await copyItemByText(text);
+      if (selected.length > 0) toggleSelectByText(text);
+      else copyItemByText(text);
     });
   });
 }
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
-let tt;
-function toast(msg){
-  const el=document.getElementById('toast');
-  el.textContent=msg; el.classList.add('show');
-  clearTimeout(tt); tt=setTimeout(()=>el.classList.remove('show'),2000);
+var toastTimer;
+function toast(msg) {
+  const el = document.getElementById('toast');
+  if (!el) return;
+  el.textContent = msg; el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function() { el.classList.remove('show'); }, 2000);
 }
 
 // ── Modal ─────────────────────────────────────────────────────────────────────
-function showSheet(title,bodyHtml){
+function showSheet(title, bodyHtml) {
   closeModal();
-  const ov=document.createElement('div');
-  ov.className='ov'; ov.id='modal-ov';
-  ov.innerHTML=`<div class="modal"><div class="mhandle"></div>
-    <p class="mtitle">${title}</p><div>${bodyHtml}</div>
-    <div class="mfoot"><button class="mbtn g" onclick="closeModal()">キャンセル</button></div>
-  </div>`;
-  ov.addEventListener('click',e=>{ if(e.target===ov) closeModal(); });
+  const ov = document.createElement('div');
+  ov.className = 'ov'; ov.id = 'modal-ov';
+  ov.innerHTML = '<div class="modal"><div class="mhandle"></div><p class="mtitle">'+title+'</p><div>'+bodyHtml+'</div><div class="mfoot"><button class="mbtn g" onclick="closeModal()">キャンセル</button></div></div>';
+  ov.addEventListener('click', function(e) { if (e.target === ov) closeModal(); });
   document.body.appendChild(ov);
 }
-function closeModal(){ document.getElementById('modal-ov')?.remove(); }
+function closeModal() { var el = document.getElementById('modal-ov'); if (el) el.remove(); }
 
-function confirm2(title,msg,onOk){
+function confirm2(title, msg, onOk) {
   closeConfirm();
-  const ov=document.createElement('div');
-  ov.className='cov'; ov.id='confirm-ov';
-  ov.innerHTML=`<div class="cbox">
-    <p class="ctitle">${title}</p>
-    <p class="cmsg">${esc(msg)}</p>
-    <div class="cbtns">
-      <button class="mbtn g" onclick="closeConfirm()">キャンセル</button>
-      <button class="mbtn d" id="cok">削除</button>
-    </div>
-  </div>`;
-  ov.querySelector('#cok').addEventListener('click',()=>{ closeConfirm(); onOk(); });
+  const ov = document.createElement('div');
+  ov.className = 'cov'; ov.id = 'confirm-ov';
+  ov.innerHTML = '<div class="cbox"><p class="ctitle">'+title+'</p><p class="cmsg">'+esc(msg)+'</p><div class="cbtns"><button class="mbtn g" onclick="closeConfirm()">キャンセル</button><button class="mbtn d" id="cok">削除</button></div></div>';
+  ov.querySelector('#cok').addEventListener('click', function() { closeConfirm(); onOk(); });
   document.body.appendChild(ov);
 }
-function closeConfirm(){ document.getElementById('confirm-ov')?.remove(); }
+function closeConfirm() { var el = document.getElementById('confirm-ov'); if (el) el.remove(); }
 
 // ── Settings ──────────────────────────────────────────────────────────────────
-function showSettings(){
-  const tabs=settings.tabs;
-  const tlist=tabs.map((t,i)=>`
-    <div class="trow">
-      <span class="tname">${esc(t)}</span>
-      <button class="mini" ${i===0?'disabled':''} onclick="moveTab(${i},-1)">↑</button>
-      <button class="mini" ${i===tabs.length-1?'disabled':''} onclick="moveTab(${i},1)">↓</button>
-      <button class="mini d" onclick="removeTab(${i})">
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-          <path d="M18 6 6 18M6 6l12 12"/>
-        </svg>
-      </button>
-    </div>`).join('');
+function showSettings() {
+  const tabs = settings.tabs;
+  const tlist = tabs.map(function(t, i) {
+    return '<div class="trow"><span class="tname">'+esc(t)+'</span>'
+      + '<button class="mini" '+(i===0?'disabled':'')+' onclick="moveTab('+i+',-1)">↑</button>'
+      + '<button class="mini" '+(i===tabs.length-1?'disabled':'')+' onclick="moveTab('+i+',1)">↓</button>'
+      + '<button class="mini d" onclick="removeTab('+i+')">'
+      + '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 6 6 18M6 6l12 12"/></svg>'
+      + '</button></div>';
+  }).join('');
 
-  const html=`
-    <div class="msec">
-      <span class="mlabel">自動消去</span>
-      <div style="display:flex;align-items:center;gap:10px">
-        <input class="minput" type="number" id="ret-days" min="1" max="365"
-          value="${settings.retentionDays}" style="width:80px;text-align:center">
-        <span style="color:var(--muted);font-size:13px">日間未使用で削除</span>
-      </div>
-    </div>
-    <div class="msec">
-      <span class="mlabel">タブ管理</span>
-      <div id="tab-list">${tlist}</div>
-      <div style="display:flex;gap:8px;margin-top:10px">
-        <input class="minput" id="new-tab" placeholder="新しいタブ名…" style="flex:1"
-          onkeydown="if(event.key==='Enter')addTab()">
-        <button class="mbtn p" onclick="addTab()">追加</button>
-      </div>
-    </div>
-    <div class="msec">
-      <span class="mlabel">データ</span>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="mbtn g" onclick="exportCSV()">CSVエクスポート</button>
-        <button class="mbtn g" onclick="importCSV()">CSVインポート</button>
-        <button class="mbtn d" onclick="clearAll()">すべて削除</button>
-      </div>
-    </div>
-    <div class="mfoot">
-      <button class="mbtn g" onclick="closeModal()">閉じる</button>
-      <button class="mbtn p" onclick="saveS()">保存</button>
-    </div>`;
+  const html = '<div class="msec"><span class="mlabel">自動消去</span>'
+    + '<div style="display:flex;align-items:center;gap:10px">'
+    + '<input class="minput" type="number" id="ret-days" min="1" max="365" value="'+settings.retentionDays+'" style="width:80px;text-align:center">'
+    + '<span style="color:var(--muted);font-size:13px">日間未使用で削除</span></div></div>'
+    + '<div class="msec"><span class="mlabel">タブ管理</span>'
+    + '<div id="tab-list">'+tlist+'</div>'
+    + '<div style="display:flex;gap:8px;margin-top:10px">'
+    + '<input class="minput" id="new-tab" placeholder="新しいタブ名…" style="flex:1" onkeydown="if(event.key==='Enter')addTab()">'
+    + '<button class="mbtn p" onclick="addTab()">追加</button></div></div>'
+    + '<div class="msec"><span class="mlabel">データ</span>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap">'
+    + '<button class="mbtn g" onclick="exportCSV()">CSVエクスポート</button>'
+    + '<button class="mbtn g" onclick="importCSV()">CSVインポート</button>'
+    + '<button class="mbtn d" onclick="clearAll()">すべて削除</button>'
+    + '</div></div>'
+    + '<div class="mfoot"><button class="mbtn g" onclick="closeModal()">閉じる</button>'
+    + '<button class="mbtn p" onclick="saveS()">保存</button></div>';
 
   closeModal();
-  const ov=document.createElement('div');
-  ov.className='ov'; ov.id='modal-ov';
-  ov.innerHTML=`<div class="modal"><div class="mhandle"></div><p class="mtitle">設定</p>${html}</div>`;
-  ov.addEventListener('click',e=>{ if(e.target===ov) closeModal(); });
+  const ov = document.createElement('div');
+  ov.className = 'ov'; ov.id = 'modal-ov';
+  ov.innerHTML = '<div class="modal"><div class="mhandle"></div><p class="mtitle">設定</p>'+html+'</div>';
+  ov.addEventListener('click', function(e) { if (e.target === ov) closeModal(); });
   document.body.appendChild(ov);
 }
 
-function saveS(){
-  const d=parseInt(document.getElementById('ret-days')?.value,10);
-  if(!isNaN(d)) settings.retentionDays=Math.max(1,d);
-  saveSettings(); pushSettingsToFirebase(); closeModal(); toast('設定を保存しました'); renderTabs();
+function saveS() {
+  const d = parseInt((document.getElementById('ret-days')||{}).value, 10);
+  if (!isNaN(d)) settings.retentionDays = Math.max(1, d);
+  saveSettings(); pushSettings(); closeModal(); toast('設定を保存しました'); renderTabs();
 }
-function moveTab(i,dir){
-  const t=settings.tabs,ni=i+dir;
-  if(ni<0||ni>=t.length) return;
-  [t[i],t[ni]]=[t[ni],t[i]];
-  saveSettings(); pushSettingsToFirebase(); showSettings();
+function moveTab(i, dir) {
+  const t = settings.tabs, ni = i + dir;
+  if (ni < 0 || ni >= t.length) return;
+  var tmp = t[i]; t[i] = t[ni]; t[ni] = tmp;
+  saveSettings(); pushSettings(); showSettings();
 }
-function removeTab(i){
-  const name=settings.tabs[i];
-  settings.tabs.splice(i,1);
-  if(activeTab===name) activeTab='すべて';
-  saveSettings(); pushSettingsToFirebase(); showSettings(); renderTabs(); renderList();
+function removeTab(i) {
+  const name = settings.tabs[i];
+  settings.tabs.splice(i, 1);
+  if (activeTab === name) activeTab = 'すべて';
+  saveSettings(); pushSettings(); showSettings(); renderTabs(); renderList();
 }
-function addTab(){
-  const el=document.getElementById('new-tab');
-  const name=el?.value.trim();
-  if(!name||settings.tabs.includes(name)) return;
+function addTab() {
+  const el = document.getElementById('new-tab');
+  const name = el ? el.value.trim() : '';
+  if (!name || settings.tabs.includes(name)) return;
   settings.tabs.push(name);
-  saveSettings(); pushSettingsToFirebase(); showSettings(); renderTabs();
+  saveSettings(); pushSettings(); showSettings(); renderTabs();
 }
-function clearAll(){
-  confirm2('すべて削除','すべてのクリップを削除します。この操作は元に戻せません。',async ()=>{
-    const texts=[...items.map(i=>i.text)];
-    items=[]; selected=[]; updateSelectBar(); renderList(); closeModal(); toast('削除しました');
-    texts.forEach(t=>{
-      textToKey(t).then(key=>{
+function clearAll() {
+  confirm2('すべて削除', 'すべてのクリップを削除します。この操作は元に戻せません。', function() {
+    const texts = items.map(function(i) { return i.text; });
+    items = []; selected = []; updateSelectBar(); renderList(); closeModal(); toast('削除しました');
+    texts.forEach(function(t) {
+      textToKey(t).then(function(key) {
         deletedKeys.add(key);
-        db.ref('deleted/'+key).set(now());
-        db.ref('clips/'+key).remove();
+        fdb.ref('deleted/'+key).set(now());
+        fdb.ref('clips/'+key).remove();
       });
     });
   });
 }
 
 // ── Export/Import ─────────────────────────────────────────────────────────────
-function exportCSV(){
-  let csv='\uFEFFtext,tab,copies,created_at,last_used\n';
-  items.forEach(i=>{ csv+=`"${i.text.replace(/"/g,'""')}","${i.tab}",${i.copies},${i.createdAt||now()},${i.lastUsed}\n`; });
-  const a=document.createElement('a');
-  a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
-  a.download='clip_backup_'+new Date().toISOString().slice(0,10)+'.csv';
+function exportCSV() {
+  let csv = '﻿text,tab,copies,created_at,last_used
+';
+  items.forEach(function(i) {
+    csv += '"'+i.text.replace(/"/g,'""')+'","'+i.tab+'",'+i.copies+','+(i.createdAt||now())+','+i.lastUsed+'
+';
+  });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv;charset=utf-8'}));
+  a.download = 'clip_backup_'+new Date().toISOString().slice(0,10)+'.csv';
   a.click(); toast('エクスポートしました');
 }
-function importCSV(){
-  const input=document.createElement('input');
-  input.type='file'; input.accept='.csv,text/csv';
-  input.onchange=e=>{
-    const file=e.target.files[0]; if(!file) return;
-    const reader=new FileReader();
-    reader.onload=async ev=>{
-      let raw=ev.target.result;
-      if(raw.startsWith('\uFEFF')) raw=raw.slice(1);
-      const records=parseCSVAll(raw);
-      const rows=records[0]?.[0]==='text'?records.slice(1):records;
-      let added=0,skipped=0;
-      for(const r of rows){
-        const text=r[0]?.trim(); if(!text) continue;
-        const tab=r[1]?.trim()||settings.tabs[0]||'未分類';
-        const copies=parseInt(r[2])||1;
-        const createdAt=parseInt(r[3])||now();
-        const lastUsed=parseInt(r[4])||now();
-        if(!items.find(i=>i.text===text)){
-          textToKey(text).then(key=>{ db.ref('clips/'+key).set({text,tab,copies,createdAt,lastUsed});
+function importCSV() {
+  const input = document.createElement('input');
+  input.type = 'file'; input.accept = '.csv,text/csv';
+  input.onchange = function(e) {
+    const file = e.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function(ev) {
+      let raw = ev.target.result;
+      if (raw.startsWith('﻿')) raw = raw.slice(1);
+      const records = parseCSVAll(raw);
+      const rows = (records[0] && records[0][0]==='text') ? records.slice(1) : records;
+      let added=0, skipped=0;
+      rows.forEach(function(r) {
+        const text = (r[0]||'').trim(); if (!text) return;
+        const tab  = (r[1]||'').trim() || settings.tabs[0] || '未分類';
+        const copies    = parseInt(r[2])||1;
+        const createdAt = parseInt(r[3])||now();
+        const lastUsed  = parseInt(r[4])||now();
+        if (!items.find(function(i) { return i.text===text; })) {
+          textToKey(text).then(function(key) {
+            fdb.ref('clips/'+key).set({text,tab,copies,createdAt,lastUsed});
+          });
           added++;
         } else skipped++;
-      }
+      });
       toast(added+'件追加、'+skipped+'件スキップ');
     };
-    reader.readAsText(file,'UTF-8');
+    reader.readAsText(file, 'UTF-8');
   };
   input.click();
 }
-function parseCSVAll(raw){
-  const records=[],rec=[],field=[];
-  let inQ=false,i=0;
-  const push=()=>{ rec.push(field.splice(0).join('')); };
-  while(i<raw.length){
-    const c=raw[i];
-    if(c==='"'&&!inQ) inQ=true;
-    else if(c==='"'&&inQ&&raw[i+1]==='"'){field.push('"');i++;}
-    else if(c==='"'&&inQ) inQ=false;
-    else if(c===','&&!inQ) push();
-    else if(c==='\n'&&!inQ){push();records.push([...rec]);rec.length=0;}
-    else if(c==='\r'&&!inQ){}
+function parseCSVAll(raw) {
+  const records=[], rec=[], field=[];
+  let inQ=false, i=0;
+  function push() { rec.push(field.splice(0).join('')); }
+  while (i < raw.length) {
+    const c = raw[i];
+    if (c==='"'&&!inQ) inQ=true;
+    else if (c==='"'&&inQ&&raw[i+1]==='"') { field.push('"'); i++; }
+    else if (c==='"'&&inQ) inQ=false;
+    else if (c===','&&!inQ) push();
+    else if (c==='
+'&&!inQ) { push(); records.push(rec.slice()); rec.length=0; }
+    else if (c===''&&!inQ) {}
     else field.push(c);
     i++;
   }
-  push(); if(rec.length) records.push([...rec]);
-  return records.filter(r=>r.some(f=>f.trim()));
+  push(); if (rec.length) records.push(rec.slice());
+  return records.filter(function(r) { return r.some(function(f){return f.trim();}); });
 }
 
 // ── Init ─────────────────────────────────────────────────────────────────────
