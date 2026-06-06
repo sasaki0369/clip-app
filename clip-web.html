@@ -231,10 +231,12 @@ const esc   = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&g
 const trunc = (t, n=200) => t.length > n ? t.slice(0,n)+'…' : t;
 
 function fmtDate(ms) {
-  const d = Math.floor((now()-ms)/86400000);
-  if (d===0) return new Date(ms).toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'});
-  if (d===1) return '昨日';
-  if (d<7)   return d+'日前';
+  const d    = Math.floor((now()-ms)/86400000);
+  const time = new Date(ms).toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'});
+  const date = new Date(ms).toLocaleDateString('ja-JP',{month:'numeric',day:'numeric'});
+  if (d===0) return date+' '+time;
+  if (d===1) return '昨日 '+time;
+  if (d<7)   return d+'日前 '+time;
   return new Date(ms).toLocaleDateString('ja-JP',{month:'short',day:'numeric'});
 }
 
@@ -316,6 +318,9 @@ function addItem(text, tab) {
     const item = { text: t, tab: tab || settings.tabs[0] || '未分類', copies: 1, createdAt: now(), lastUsed: now() };
     items.unshift(item); renderList();
     textToKey(t).then(function(key) {
+      // 削除済みリストから除去してから保存（再追加を許可）
+      deletedKeys.delete(key);
+      fdb.ref('deleted/'+key).remove();
       fdb.ref('clips/'+key).set(item);
     });
   }
@@ -670,7 +675,10 @@ function importCSV() {
         const lastUsed  = parseInt(r[4])||now();
         if (!items.find(function(i) { return i.text===text; })) {
           textToKey(text).then(function(key) {
-            fdb.ref('clips/'+key).set({text,tab,copies,createdAt,lastUsed});
+            // 削除済みでなければ保存
+            if (!deletedKeys.has(key)) {
+              fdb.ref('clips/'+key).set({text:text,tab:tab,copies:copies,createdAt:createdAt,lastUsed:lastUsed});
+            }
           });
           added++;
         } else skipped++;
