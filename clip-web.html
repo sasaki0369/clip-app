@@ -258,27 +258,32 @@ db.ref('clips').on('value', snap=>{
   const data=snap.val();
   const remote = data ? Object.values(data) : [];
   const cut = now() - settings.retentionDays*86400000;
-  // ローカルの楽観的更新を保持：リモートより新しいローカル値を優先
-  // deletedKeysに含まれるものは除外（削除済みが戻ってくるのを防ぐ）
-  const remoteCleaned = await Promise.all(
-    remote
-      .filter(i=>i.text && i.lastUsed>=cut)
-      .map(async i=>({ item:i, key:await textToKey(i.text) }))
-  );
-  const merged = remoteCleaned
-    .filter(({key})=>!deletedKeys.has(key))
-    .map(({item:r})=>{
-      const local = items.find(l=>l.text===r.text);
-      if(local && local.lastUsed >= r.lastUsed) return local;
-      return r;
-    });
-  items = merged;
-  setSyncStatus('on');
-  renderList();
+  // 非同期不要：textToKeyを使わずdeletedKeysはキー名で管理
+  // Firebaseのキー名がハッシュなのでchild.keyで直接比較
+  applyRemoteData(snap);
 }, err=>{
   setSyncStatus('err');
   toast('DB接続エラー: '+err.message);
 });
+
+// clips onValueから呼ぶ処理（同期的に実行）
+function applyRemoteData(snap){
+  const cut = now() - settings.retentionDays*86400000;
+  const merged = [];
+  snap.children.forEach(child=>{
+    // 削除済みキーはスキップ
+    if(deletedKeys.has(child.key)) return;
+    const r = child.val();
+    if(!r || !r.text || r.lastUsed < cut) return;
+    // ローカルが新しければローカル優先
+    const local = items.find(l=>l.text===r.text);
+    if(local && local.lastUsed >= r.lastUsed) merged.push(local);
+    else merged.push(r);
+  });
+  items = merged;
+  setSyncStatus('on');
+  renderList();
+}
 
 // ── Firebase設定同期 ──────────────────────────────────────────────────────────
 let ignoreSettingsUpdate = false;
@@ -307,18 +312,19 @@ function pushSettingsToFirebase(){
 // ── Add ───────────────────────────────────────────────────────────────────────
 async function addItem(text, tab){
   const t=text.trim(); if(!t) return;
-  const key=await textToKey(t);
   const ex=items.find(i=>i.text===t);
-  if(ex){
-    ex.copies++; ex.lastUsed=now();
-    renderList();
-    db.ref('clips/'+key).update({copies:ex.copies, lastUsed:ex.lastUsed});
-  } else {
-    const item={text:t, tab:tab||settings.tabs[0]||'未分類', copies:1, createdAt:now(), lastUsed:now()};
-    items.unshift(item); // ローカル即時追加
-    renderList();
-    db.ref('clips/'+key).set(item);
-  }
+  textToKey(t).then(key=>{
+    if(ex){
+      ex.copies++; ex.lastUsed=now();
+      renderList();
+      db.ref('clips/'+key).update({copies:ex.copies, lastUsed:ex.lastUsed});
+    } else {
+      const item={text:t, tab:tab||settings.tabs[0]||'未分類', copies:1, createdAt:now(), lastUsed:now()};
+      items.unshift(item);
+      renderList();
+      db.ref('clips/'+key).set(item);
+    }
+  });
   toast('追加しました');
 }
 
@@ -353,8 +359,9 @@ async function copyItemByText(text){
   renderList();
   toast('コピーしました ✓');
   // Firebase更新
-  const key=await textToKey(text);
-  db.ref('clips/'+key).update({copies:item.copies, lastUsed:item.lastUsed});
+  textToKey(text).then(key=>{
+    db.ref('clips/'+key).update({copies:item.copies, lastUsed:item.lastUsed});
+  });
 }
 
 // ── Delete ────────────────────────────────────────────────────────────────────
@@ -363,13 +370,16 @@ async function deleteItemByText(text){
   const preview=text.slice(0,40)+(text.length>40?'...':'');
   confirm2('削除の確認', '"'+preview+'" を削除しますか？',
     async ()=>{
-      const key=await textToKey(text);
-      deletedKeys.add(key); // ローカルに削除済みとして記録
-      db.ref('deleted/'+key).set(now()); // Firebaseにも永続記録
+      // ローカルを即時更新
       items=items.filter(i=>i.text!==text);
       selected=selected.filter(s=>s!==text);
       updateSelectBar(); renderList(); toast('削除しました');
-      db.ref('clips/'+key).remove();
+      // Firebaseから削除（async処理）
+      textToKey(text).then(key=>{
+        deletedKeys.add(key);
+        db.ref('deleted/'+key).set(now());
+        db.ref('clips/'+key).remove();
+      });
     }
   );
 }
@@ -384,14 +394,13 @@ function changeTabByText(text){
   }).join('');
   showSheet('タブを変更', btns);
 }
-async function doChangeTabB64(b64text, b64tab){
+function doChangeTabB64(b64text, b64tab){
   closeModal();
   const text=decodeURIComponent(escape(atob(b64text)));
   const tab=decodeURIComponent(escape(atob(b64tab)));
   const item=items.find(i=>i.text===text); if(!item) return;
   item.tab=tab; renderList(); toast('「'+tab+'」に移動しました');
-  const key=await textToKey(text);
-  db.ref('clips/'+key).update({tab});
+  textToKey(text).then(key=>{ db.ref('clips/'+key).update({tab}); });
 }
 
 
@@ -659,12 +668,13 @@ function clearAll(){
   confirm2('すべて削除','すべてのクリップを削除します。この操作は元に戻せません。',async ()=>{
     const texts=[...items.map(i=>i.text)];
     items=[]; selected=[]; updateSelectBar(); renderList(); closeModal(); toast('削除しました');
-    for(const t of texts){
-      const key=await textToKey(t);
-      deletedKeys.add(key);
-      db.ref('deleted/'+key).set(now()); // Firebaseに永続記録
-      db.ref('clips/'+key).remove();
-    }
+    texts.forEach(t=>{
+      textToKey(t).then(key=>{
+        deletedKeys.add(key);
+        db.ref('deleted/'+key).set(now());
+        db.ref('clips/'+key).remove();
+      });
+    });
   });
 }
 
@@ -696,8 +706,7 @@ function importCSV(){
         const createdAt=parseInt(r[3])||now();
         const lastUsed=parseInt(r[4])||now();
         if(!items.find(i=>i.text===text)){
-          const key=await textToKey(text);
-          db.ref('clips/'+key).set({text,tab,copies,createdAt,lastUsed});
+          textToKey(text).then(key=>{ db.ref('clips/'+key).set({text,tab,copies,createdAt,lastUsed});
           added++;
         } else skipped++;
       }
