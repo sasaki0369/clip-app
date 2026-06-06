@@ -274,6 +274,30 @@ db.ref('clips').on('value', snap=>{
   toast('DB接続エラー');
 });
 
+// ── Firebase設定同期 ──────────────────────────────────────────────────────────
+db.ref('app_settings').on('value', snap=>{
+  const data=snap.val();
+  if(!data) return;
+  const remoteTabs = data.tabs || [];
+  const remoteDays = data.retentionDays || 30;
+  if(remoteTabs.length > 0 && JSON.stringify(remoteTabs) !== JSON.stringify(settings.tabs)){
+    settings.tabs = remoteTabs;
+    saveSettings();
+    renderTabs();
+  }
+  if(remoteDays !== settings.retentionDays){
+    settings.retentionDays = remoteDays;
+    saveSettings();
+  }
+});
+
+function pushSettingsToFirebase(){
+  db.ref('app_settings').set({
+    tabs: settings.tabs,
+    retentionDays: settings.retentionDays
+  });
+}
+
 // ── MD5キー生成 ──────────────────────────────────────────────────────────────
 async function textToKey(text){
   const encoder = new TextEncoder();
@@ -578,19 +602,19 @@ function moveTab(i,dir){
   const t=settings.tabs,ni=i+dir;
   if(ni<0||ni>=t.length) return;
   [t[i],t[ni]]=[t[ni],t[i]];
-  saveSettings(); showSettings();
+  saveSettings(); pushSettingsToFirebase(); showSettings();
 }
 function removeTab(i){
   const name=settings.tabs[i];
   settings.tabs.splice(i,1);
   if(activeTab===name) activeTab='すべて';
-  saveSettings(); showSettings(); renderTabs(); renderList();
+  saveSettings(); pushSettingsToFirebase(); showSettings(); renderTabs(); renderList();
 }
 function addTab(){
   const el=document.getElementById('new-tab');
   const name=el?.value.trim();
   if(!name||settings.tabs.includes(name)) return;
-  settings.tabs.push(name); saveSettings(); showSettings(); renderTabs();
+  settings.tabs.push(name); saveSettings(); pushSettingsToFirebase(); showSettings(); renderTabs();
 }
 function clearAll(){
   confirm2('すべて削除','すべてのクリップを削除します。この操作は元に戻せません。',async ()=>{
