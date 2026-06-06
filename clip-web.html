@@ -212,6 +212,7 @@ let activeTab = 'すべて';
 let selected  = []; // text の配列
 let longTimer = null;
 let pendingText = null;
+const deletedKeys = new Set(); // 削除済みキーを記録（Firebaseが戻してくるのを防ぐ）
 
 function loadSettings(){
   try{ settings={...settings,...JSON.parse(localStorage.getItem(SK)||'{}')}; }catch{}
@@ -247,16 +248,28 @@ function setSyncStatus(s){
 }
 
 // ── Firebase リアルタイム監視 ──────────────────────────────────────────────────
+// ── 起動時に削除済みキーをFirebaseから読み込む ────────────────────────────────
+db.ref('deleted').once('value', snap=>{
+  const data=snap.val()||{};
+  Object.keys(data).forEach(k=>deletedKeys.add(k));
+});
+
 db.ref('clips').on('value', snap=>{
   const data=snap.val();
   const remote = data ? Object.values(data) : [];
   const cut = now() - settings.retentionDays*86400000;
   // ローカルの楽観的更新を保持：リモートより新しいローカル値を優先
-  const merged = remote
-    .filter(i=>i.text && i.lastUsed>=cut)
-    .map(r=>{
+  // deletedKeysに含まれるものは除外（削除済みが戻ってくるのを防ぐ）
+  const remoteCleaned = await Promise.all(
+    remote
+      .filter(i=>i.text && i.lastUsed>=cut)
+      .map(async i=>({ item:i, key:await textToKey(i.text) }))
+  );
+  const merged = remoteCleaned
+    .filter(({key})=>!deletedKeys.has(key))
+    .map(({item:r})=>{
       const local = items.find(l=>l.text===r.text);
-      if(local && local.lastUsed >= r.lastUsed) return local; // ローカルが新しければ優先
+      if(local && local.lastUsed >= r.lastUsed) return local;
       return r;
     });
   items = merged;
@@ -350,10 +363,12 @@ async function deleteItemByText(text){
   const preview=text.slice(0,40)+(text.length>40?'...':'');
   confirm2('削除の確認', '"'+preview+'" を削除しますか？',
     async ()=>{
+      const key=await textToKey(text);
+      deletedKeys.add(key); // ローカルに削除済みとして記録
+      db.ref('deleted/'+key).set(now()); // Firebaseにも永続記録
       items=items.filter(i=>i.text!==text);
       selected=selected.filter(s=>s!==text);
       updateSelectBar(); renderList(); toast('削除しました');
-      const key=await textToKey(text);
       db.ref('clips/'+key).remove();
     }
   );
@@ -644,7 +659,12 @@ function clearAll(){
   confirm2('すべて削除','すべてのクリップを削除します。この操作は元に戻せません。',async ()=>{
     const texts=[...items.map(i=>i.text)];
     items=[]; selected=[]; updateSelectBar(); renderList(); closeModal(); toast('削除しました');
-    for(const t of texts){ const key=await textToKey(t); db.ref('clips/'+key).remove(); }
+    for(const t of texts){
+      const key=await textToKey(t);
+      deletedKeys.add(key);
+      db.ref('deleted/'+key).set(now()); // Firebaseに永続記録
+      db.ref('clips/'+key).remove();
+    }
   });
 }
 
