@@ -62,8 +62,9 @@
   .card-actions{display:flex;align-items:center;gap:4px;opacity:0;transition:opacity .12s}
   .card:hover .card-actions,.card.selected .card-actions{opacity:1}
   .sel-num{width:20px;height:20px;border-radius:50%;background:var(--text);color:#fff;font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:center}
-  .del-btn{width:26px;height:26px;background:transparent;border:none;border-radius:6px;cursor:pointer;color:var(--muted);display:flex;align-items:center;justify-content:center;transition:all .12s}
-  .del-btn:hover{background:rgba(220,38,38,.08);color:var(--red)}
+  .del-btn{width:32px;height:32px;background:rgba(0,0,0,.04);border:1px solid var(--border);border-radius:8px;cursor:pointer;color:var(--muted2);display:flex;align-items:center;justify-content:center;transition:all .12s;flex-shrink:0}
+  .del-btn:hover{background:rgba(220,38,38,.1);color:var(--red);border-color:rgba(220,38,38,.25)}
+  .del-btn:active{transform:scale(.92)}
   .select-bar{position:fixed;bottom:76px;left:50%;transform:translateX(-50%);background:var(--text);border-radius:12px;padding:8px 8px 8px 14px;display:flex;align-items:center;gap:8px;box-shadow:0 8px 32px rgba(0,0,0,.15);z-index:50;white-space:nowrap;animation:su .2s cubic-bezier(.34,1.56,.64,1) both}
   @keyframes su{from{opacity:0;transform:translateX(-50%) translateY(8px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
   .select-bar.hidden{display:none}
@@ -100,6 +101,13 @@
   .mbtn.p:hover{opacity:.82}
   .mbtn.g{background:transparent;color:var(--muted2);border:1px solid var(--border)}
   .mbtn.g:hover{color:var(--text);border-color:var(--border2)}
+  .mbtn.g:active{background:var(--surface2)}
+  .tab-pick-btn{width:100%;text-align:left;margin-bottom:8px;font-family:var(--m);
+    padding:13px 16px !important;font-size:15px !important;border-radius:10px !important;
+    background:var(--surface) !important;border:1px solid var(--border) !important;
+    color:var(--text) !important;display:flex;align-items:center;gap:10px}
+  .tab-pick-btn:hover{background:var(--surface2) !important;border-color:var(--border2) !important}
+  .tab-pick-btn:active{background:var(--text) !important;color:#fff !important}
   .mbtn.d{background:transparent;color:var(--red);border:1px solid rgba(220,38,38,.2)}
   .mbtn.d:hover{background:rgba(220,38,38,.05)}
   .mfoot{display:flex;justify-content:flex-end;gap:8px;margin-top:20px}
@@ -281,8 +289,12 @@ function addItem(text, tab){
 function pickTabAndSave(text){
   pendingText = text;
   const btns = settings.tabs.map(t=>
-    `<button class="mbtn g" style="width:100%;text-align:left;margin-bottom:6px;font-family:var(--m)"
-      onclick="confirmTab('${esc(t)}')">${esc(t)}</button>`
+    `<button class="mbtn tab-pick-btn" onclick="confirmTab(decodeURIComponent('${encodeURIComponent(t)}'))">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" opacity="0.4">
+        <rect x="8" y="2" width="8" height="4" rx="1.5"/>
+        <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
+      </svg>
+      ${esc(t)}</button>`
   ).join('');
   showSheet('タブを選択して保存', btns);
 }
@@ -312,8 +324,13 @@ function deleteItem(id){
 // ── Change Tab ────────────────────────────────────────────────────────────────
 function changeTab(id){
   const btns=settings.tabs.map(t=>
-    `<button class="mbtn g" style="width:100%;text-align:left;margin-bottom:6px;font-family:var(--m)"
-      onclick="doChangeTab('${id}','${esc(t)}');closeModal()">${esc(t)}</button>`
+    `<button class="mbtn tab-pick-btn"
+      onclick="doChangeTab('${id}',decodeURIComponent('${encodeURIComponent(t)}'));closeModal()">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" opacity="0.4">
+        <rect x="8" y="2" width="8" height="4" rx="1.5"/>
+        <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
+      </svg>
+      ${esc(t)}</button>`
   ).join('');
   showSheet('タブを変更', btns);
 }
@@ -422,7 +439,7 @@ function renderList(){
         ${isSel
           ?`<div class="sel-num">${si+1}</div>`
           :`<button class="del-btn" onclick="event.stopPropagation();deleteItem('${item.id}')">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M18 6 6 18M6 6l12 12"/>
               </svg></button>`
         }
@@ -589,8 +606,12 @@ function importCSV(){
       rows.forEach(r=>{
         const text=r[0]?.trim(); if(!text) return;
         const tab=r[1]?.trim()||settings.tabs[0]||'未分類';
-        if(!items.find(i=>i.text===text)){
-          fbSave({id:uid(),text,tab,copies:1,createdAt:now(),lastUsed:now()}); added++;
+        const copies=parseInt(r[2])||1;
+        const createdAt=parseInt(r[3])||now();
+        const lastUsed=parseInt(r[4])||now();
+        const ex=items.find(i=>i.text===text);
+        if(!ex){
+          fbSave({id:uid(),text,tab,copies,createdAt,lastUsed}); added++;
         } else skipped++;
       });
       toast(added+'件追加、'+skipped+'件スキップ');
