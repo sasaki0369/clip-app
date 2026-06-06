@@ -326,7 +326,7 @@ function pickTabAndSave(text) {
   pendingText = text;
   const btns = settings.tabs.map(function(t) {
     const tb64 = btoa(unescape(encodeURIComponent(t)));
-    return '<button class="mbtn tab-pick-btn" onclick="confirmTabB64(''+tb64+'')">'+esc(t)+'</button>';
+    return '<button class="mbtn tab-pick-btn" onclick="confirmTabB64(&quot;'+tb64+'&quot;)">'+esc(t)+'</button>';
   }).join('');
   showSheet('タブを選択して保存', btns);
 }
@@ -384,7 +384,7 @@ function changeTabByText(text) {
   const b64text = btoa(unescape(encodeURIComponent(text)));
   const btns = settings.tabs.map(function(t) {
     const tb64 = btoa(unescape(encodeURIComponent(t)));
-    return '<button class="mbtn tab-pick-btn" onclick="applyTabChange(''+b64text+'',''+tb64+'')">'+esc(t)+'</button>';
+    return '<button class="mbtn tab-pick-btn" onclick="applyTabChange(&quot;'+b64text+'&quot;,&quot;'+tb64+'&quot;)">'+esc(t)+'</button>';
   }).join('');
   showSheet('タブを変更', btns);
 }
@@ -414,8 +414,7 @@ function updateSelectBar() {
   if (lbl) lbl.textContent = selected.length + '件選択中';
 }
 function mergeSelected() {
-  const merged = selected.join('
-');
+  const merged = selected.join('\n');
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(merged).catch(function() { fallbackCopy(merged); });
   } else { fallbackCopy(merged); }
@@ -469,7 +468,7 @@ function renderTabs() {
   const row = document.getElementById('tabs-row');
   if (!row) return;
   row.innerHTML = ['すべて'].concat(settings.tabs).map(function(t) {
-    return '<button class="tab-btn '+(t===activeTab?'active':'')+'" onclick="switchTab(''+esc(t)+'')">'+esc(t)+'</button>';
+    return '<button class="tab-btn '+(t===activeTab?'active':'')+'" onclick="switchTab(&quot;'+esc(t)+'&quot;)">'+esc(t)+'</button>';
   }).join('');
 }
 function switchTab(t) { activeTab = t; renderTabs(); renderList(); }
@@ -583,7 +582,7 @@ function showSettings() {
     + '<div class="msec"><span class="mlabel">タブ管理</span>'
     + '<div id="tab-list">'+tlist+'</div>'
     + '<div style="display:flex;gap:8px;margin-top:10px">'
-    + '<input class="minput" id="new-tab" placeholder="新しいタブ名…" style="flex:1" onkeydown="if(event.key==='Enter')addTab()">'
+    + '<input class="minput" id="new-tab" placeholder="新しいタブ名…" style="flex:1" onkeydown=&quot;if(event.key===&apos;Enter&apos;)addTab()&quot;>'
     + '<button class="mbtn p" onclick="addTab()">追加</button></div></div>'
     + '<div class="msec"><span class="mlabel">データ</span>'
     + '<div style="display:flex;gap:8px;flex-wrap:wrap">'
@@ -642,11 +641,9 @@ function clearAll() {
 
 // ── Export/Import ─────────────────────────────────────────────────────────────
 function exportCSV() {
-  let csv = '﻿text,tab,copies,created_at,last_used
-';
+  let csv = '\uFEFFtext,tab,copies,created_at,last_used\n';
   items.forEach(function(i) {
-    csv += '"'+i.text.replace(/"/g,'""')+'","'+i.tab+'",'+i.copies+','+(i.createdAt||now())+','+i.lastUsed+'
-';
+    csv += '"'+i.text.replace(/"/g,'""')+'","'+i.tab+'",'+i.copies+','+(i.createdAt||now())+','+i.lastUsed+'\n';
   });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv;charset=utf-8'}));
@@ -694,10 +691,8 @@ function parseCSVAll(raw) {
     else if (c==='"'&&inQ&&raw[i+1]==='"') { field.push('"'); i++; }
     else if (c==='"'&&inQ) inQ=false;
     else if (c===','&&!inQ) push();
-    else if (c==='
-'&&!inQ) { push(); records.push(rec.slice()); rec.length=0; }
-    else if (c==='
-'&&!inQ) {}
+    else if (c==='\n'&&!inQ) { push(); records.push(rec.slice()); rec.length=0; }
+    else if (c==='\n'&&!inQ) {}
     else field.push(c);
     i++;
   }
