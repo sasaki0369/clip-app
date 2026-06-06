@@ -284,6 +284,13 @@ function fbUpdateItem(id, data) {
     .catch(() => setSyncStatus('error'));
 }
 
+// ── 接続状態監視 ──────────────────────────────────────────────────────────────
+onValue(ref(db, '.info/connected'), snapshot => {
+  const connected = snapshot.val();
+  console.log('[Clip] Firebase connected:', connected);
+  if (!connected) setSyncStatus('error');
+});
+
 // ── リアルタイム同期（全端末で共有） ─────────────────────────────────────────
 onValue(ref(db, 'clips'), snapshot => {
   const data = snapshot.val();
@@ -398,7 +405,7 @@ function submitPaste() {
   }
   showSheet('タブを選択して保存', settings.tabs.map(t=>
     `<button class="modal-btn ghost" style="width:100%;text-align:left;margin-bottom:6px;font-family:var(--mono)"
-      onclick="window._addItem(${JSON.stringify(text)},${JSON.stringify(t)});closeModal()">${esc(t)}</button>`
+      onclick="window.addItem(${JSON.stringify(text)},${JSON.stringify(t)});closeModal()">${esc(t)}</button>`
   ).join(''));
   el.value=''; onTextareaInput(el);
 }
@@ -659,16 +666,25 @@ function parseCSVAll(raw) {
   return records.filter(r=>r.some(f=>f.trim()));
 }
 
-// グローバル公開
-window.changeTab=changeTab; window.deleteItem=deleteItem;
-window.mergeSelected=mergeSelected; window.clearSelect=clearSelect;
-window.onTextareaInput=onTextareaInput; window.onTextareaKey=onTextareaKey;
-window.submitPaste=submitPaste;
+// ── グローバル公開（HTML onclickから呼べるように） ──────────────────────────
+window.addItem          = addItem;
+window.changeTab        = changeTab;
+window.deleteItem       = deleteItem;
+window.mergeSelected    = mergeSelected;
+window.clearSelect      = clearSelect;
+window.onTextareaInput  = onTextareaInput;
+window.onTextareaKey    = onTextareaKey;
+window.submitPaste      = submitPaste;
+window.showSettings     = showSettings;
+window.closeModal       = closeModal;
+window.closeConfirm     = closeConfirm;
+window.pasteFromClipboard = pasteFromClipboard;
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 loadSettings();
 renderTabs();
 setSyncStatus('syncing');
+console.log('[Clip] App initialized');
 </script>
 </body>
 </html>
