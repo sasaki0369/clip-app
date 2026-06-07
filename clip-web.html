@@ -314,10 +314,12 @@ function addItem(text, tab) {
   if (!t) return;
   const ex = items.find(i => i.text === t);
   if (ex) {
-    ex.copies++; ex.lastUsed = now();
+    const exCopies = (ex.copies || 0) + 1;
+    const exLastUsed = now();
+    ex.copies = exCopies; ex.lastUsed = exLastUsed;
     renderList();
     textToKey(t).then(function(key) {
-      fdb.ref('clips/'+key).update({ copies: ex.copies, lastUsed: ex.lastUsed });
+      fdb.ref('clips/'+key).update({ copies: exCopies, lastUsed: exLastUsed });
     });
   } else {
     const item = { text: t, tab: tab || settings.tabs[0] || '未分類', copies: 1, createdAt: now(), lastUsed: now() };
@@ -356,12 +358,15 @@ function copyItemByText(text) {
   } else {
     fallbackCopy(item.text);
   }
+  // 値をキャプチャ（.then()内でitemが差し替わっても正しい値を送れるよう）
+  const newCopies = (item.copies || 0) + 1;
+  const newLastUsed = now();
   // ローカル即時更新
-  item.copies++; item.lastUsed = now();
+  item.copies = newCopies; item.lastUsed = newLastUsed;
   renderList(); toast('コピーしました ✓');
-  // Firebase更新
+  // Firebase更新（キャプチャした値を使う）
   textToKey(text).then(function(key) {
-    fdb.ref('clips/'+key).update({ copies: item.copies, lastUsed: item.lastUsed });
+    fdb.ref('clips/'+key).update({ copies: newCopies, lastUsed: newLastUsed });
   });
 }
 function fallbackCopy(text) {
@@ -680,14 +685,16 @@ function importCSV() {
         const lastUsed  = parseInt(r[4])||now();
         if (!items.find(function(i) { return i.text===text; })) {
           textToKey(text).then(function(key) {
-            // 削除済みでなければ保存
             if (!deletedKeys.has(key)) {
               fdb.ref('clips/'+key).set({text:text,tab:tab,copies:copies,createdAt:createdAt,lastUsed:lastUsed});
             }
           });
+          // ローカルにも即時追加
+          items.push({text:text,tab:tab,copies:copies,createdAt:createdAt,lastUsed:lastUsed});
           added++;
         } else skipped++;
       });
+      if (added > 0) renderList();
       toast(added+'件追加、'+skipped+'件スキップ');
     };
     reader.readAsText(file, 'UTF-8');
