@@ -685,9 +685,11 @@ function importCSV() {
         const lastUsed  = parseInt(r[4])||now();
         if (!items.find(function(i) { return i.text===text; })) {
           textToKey(text).then(function(key) {
-            if (!deletedKeys.has(key)) {
-              fdb.ref('clips/'+key).set({text:text,tab:tab,copies:copies,createdAt:createdAt,lastUsed:lastUsed});
-            }
+            // 削除済みから除去（再インポートを許可）
+            deletedKeys.delete(key);
+            fdb.ref('deleted/'+key).remove();
+            // Firebaseに書き込み
+            fdb.ref('clips/'+key).set({text:text,tab:tab,copies:copies,createdAt:createdAt,lastUsed:lastUsed});
           });
           // ローカルにも即時追加
           items.push({text:text,tab:tab,copies:copies,createdAt:createdAt,lastUsed:lastUsed});
