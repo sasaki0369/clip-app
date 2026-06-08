@@ -62,13 +62,16 @@
   .tab-badge:hover{color:var(--text);border-color:var(--border2)}
   .meta-date{font-size:11px;color:var(--muted);font-family:var(--m)}
   .meta-copies{font-size:11px;color:var(--muted);font-family:var(--m);margin-left:auto}
-  .card-actions{display:flex;align-items:center;gap:4px;opacity:0;transition:opacity .12s}
+  .card-actions{display:flex;flex-direction:column;align-items:center;gap:4px;opacity:0;transition:opacity .12s}
   .card:hover .card-actions,.card.selected .card-actions{opacity:1}
   @media(hover:none){.card-actions{opacity:1}}
   .sel-num{width:20px;height:20px;border-radius:50%;background:var(--text);color:#fff;font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:center}
-  .del-btn{width:32px;height:32px;background:rgba(0,0,0,.04);border:1px solid var(--border);border-radius:8px;cursor:pointer;color:var(--muted2);display:flex;align-items:center;justify-content:center;transition:all .12s;flex-shrink:0}
+  .del-btn{width:28px;height:28px;background:rgba(0,0,0,.04);border:1px solid var(--border);border-radius:7px;cursor:pointer;color:var(--muted2);display:flex;align-items:center;justify-content:center;transition:all .12s;flex-shrink:0}
   .del-btn:hover{background:rgba(220,38,38,.1);color:var(--red);border-color:rgba(220,38,38,.25)}
   .del-btn:active{transform:scale(.92)}
+  .edit-btn{width:28px;height:28px;background:rgba(0,0,0,.04);border:1px solid var(--border);border-radius:7px;cursor:pointer;color:var(--muted2);display:flex;align-items:center;justify-content:center;transition:all .12s;flex-shrink:0}
+  .edit-btn:hover{background:rgba(0,0,0,.07);color:var(--text);border-color:var(--border2)}
+  .edit-btn:active{transform:scale(.92)}
   .select-bar{position:fixed;bottom:76px;left:50%;transform:translateX(-50%);background:var(--text);border-radius:12px;padding:8px 8px 8px 14px;display:flex;align-items:center;gap:8px;box-shadow:0 8px 32px rgba(0,0,0,.15);z-index:50;white-space:nowrap;animation:su .2s cubic-bezier(.34,1.56,.64,1) both}
   @keyframes su{from{opacity:0;transform:translateX(-50%) translateY(8px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
   .select-bar.hidden{display:none}
@@ -375,6 +378,114 @@ function fallbackCopy(text) {
   document.execCommand('copy'); document.body.removeChild(ta);
 }
 
+// ── Edit ─────────────────────────────────────────────────────────────────────
+function editItemByText(text) {
+  const item = items.find(function(i) { return i.text === text; });
+  if (!item) return;
+
+  // 編集モーダルを表示
+  closeModal();
+  const ov = document.createElement('div');
+  ov.className = 'ov'; ov.id = 'modal-ov';
+
+  const b64 = btoa(unescape(encodeURIComponent(text)));
+  ov.innerHTML = '<div class="modal">'
+    + '<div class="mhandle"></div>'
+    + '<p class="mtitle">テキストを編集</p>'
+    + '<div class="msec">'
+    + '<textarea id="edit-textarea" class="minput" rows="6" style="resize:vertical;line-height:1.6;font-family:var(--mono);font-size:13px">'+escForAttr(text)+'</textarea>'
+    + '</div>'
+    + '<div class="msec">'
+    + '<span class="mlabel">タブ</span>'
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap" id="edit-tab-btns">'
+    + settings.tabs.map(function(t) {
+        const tb64 = btoa(unescape(encodeURIComponent(t))); return '<button class="mbtn '+(t===item.tab?'p':'g')+'" data-tab="'+tb64+'" data-action="etab" style="font-size:12px;padding:5px 10px">'+esc(t)+'</button>';
+      }).join('')
+    + '</div>'
+    + '</div>'
+    + '<div class="mfoot">'
+    + '<button class="mbtn g" onclick="closeModal()">キャンセル</button>'
+    + '<button class="mbtn p" id="save-edit-btn">保存</button>'
+    + '</div>'
+    + '</div>';
+
+  ov.addEventListener('click', function(e) { if (e.target === ov) closeModal(); });
+  document.body.appendChild(ov);
+
+  // 現在のタブを選択状態にする
+  // 保存ボタンのイベントを設定
+  const saveBtn = document.getElementById('save-edit-btn');
+  if (saveBtn) saveBtn.addEventListener('click', function() { saveEdit(b64); });
+
+  // タブボタンのクリックイベントを設定
+  document.querySelectorAll('#edit-tab-btns [data-action="etab"]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      document.querySelectorAll('#edit-tab-btns [data-action="etab"]').forEach(function(b) {
+        b.className = 'mbtn g';
+      });
+      btn.className = 'mbtn p';
+    });
+  });
+}
+
+async function saveEdit(b64orig) {
+  const origText = decodeURIComponent(escape(atob(b64orig)));
+  const el = document.getElementById('edit-textarea');
+  if (!el) return;
+  const newText = el.value.trim();
+  if (!newText) { toast('テキストが空です'); return; }
+
+  // 選択中のタブを取得
+  const activeTabBtn = document.querySelector('#edit-tab-btns [data-action="etab"].p');
+  const newTab = activeTabBtn
+    ? decodeURIComponent(escape(atob(activeTabBtn.dataset.tab)))
+    : settings.tabs[0] || '未分類';
+
+  const item = items.find(function(i) { return i.text === origText; });
+  if (!item) { closeModal(); return; }
+
+  closeModal();
+
+  if (newText === origText && newTab === item.tab) {
+    toast('変更なし'); return;
+  }
+
+  if (newText !== origText) {
+    // テキストが変わった場合：旧キーを削除して新キーで保存
+    textToKey(origText).then(function(oldKey) {
+      // 旧データ削除
+      deletedKeys.add(oldKey);
+      fdb.ref('deleted/'+oldKey).set(now());
+      fdb.ref('clips/'+oldKey).remove();
+    });
+    // ローカル更新
+    item.text = newText; item.tab = newTab; item.lastUsed = now();
+    // 新キーで保存
+    textToKey(newText).then(function(newKey) {
+      deletedKeys.delete(newKey);
+      fdb.ref('deleted/'+newKey).remove();
+      fdb.ref('clips/'+newKey).set({
+        text: newText, tab: newTab,
+        copies: item.copies, createdAt: item.createdAt, lastUsed: item.lastUsed
+      });
+    });
+  } else {
+    // タブだけ変わった場合
+    item.tab = newTab;
+    textToKey(origText).then(function(key) {
+      fdb.ref('clips/'+key).update({ tab: newTab });
+    });
+  }
+
+  renderList(); toast('保存しました');
+}
+
+// HTML属性に安全に埋め込むためのエスケープ
+function escForAttr(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+          .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
 // ── Delete ────────────────────────────────────────────────────────────────────
 function deleteItemByText(text) {
   const item = items.find(i => i.text === text);
@@ -519,7 +630,8 @@ function renderList() {
       + '<div class="card-actions">'
       + (isSel
         ? '<div class="sel-num">'+(si+1)+'</div>'
-        : '<button class="del-btn" data-action="del"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button>')
+        : '<button class="edit-btn" data-action="edit"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>'
+        + '<button class="del-btn" data-action="del"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button>')
       + '</div></div>';
   }).join('');
 
@@ -537,6 +649,9 @@ function renderList() {
     card.addEventListener('click', function(e) {
       if (e.target.closest('[data-action="del"]')) {
         e.stopPropagation(); deleteItemByText(text); return;
+      }
+      if (e.target.closest('[data-action="edit"]')) {
+        e.stopPropagation(); editItemByText(text); return;
       }
       if (e.target.closest('[data-action="tab"]')) {
         e.stopPropagation(); changeTabByText(text); return;
