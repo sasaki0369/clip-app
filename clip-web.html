@@ -351,6 +351,11 @@ function confirmTabB64(tb64) {
   if (pendingText) { addItem(pendingText, tab); pendingText = null; }
 }
 
+// ── URL判定 ───────────────────────────────────────────────────────────────────
+function isUrl(text) {
+  return /^https?:\/\//i.test(text.trim());
+}
+
 // ── Copy ──────────────────────────────────────────────────────────────────────
 function copyItemByText(text) {
   const item = items.find(i => i.text === text);
@@ -486,6 +491,53 @@ function escForAttr(s) {
           .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
+// ── URL アクションシート ──────────────────────────────────────────────────────
+function showUrlActionSheet(text) {
+  closeModal();
+  const ov = document.createElement('div');
+  ov.className = 'ov'; ov.id = 'modal-ov';
+  const b64 = btoa(unescape(encodeURIComponent(text)));
+  const preview = text.length > 50 ? text.slice(0, 50) + '…' : text;
+
+  ov.innerHTML = '<div class="modal">'
+    + '<div class="mhandle"></div>'
+    + '<p class="mtitle" style="font-size:13px;color:var(--muted);font-weight:400;word-break:break-all;margin-bottom:16px">' + esc(preview) + '</p>'
+    + '<div style="display:flex;flex-direction:column;gap:8px">'
+    + '<button class="mbtn p" id="url-open" style="width:100%;padding:13px;font-size:15px;text-align:left;display:flex;align-items:center;gap:10px">'
+    + '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>'
+    + 'ブラウザで開く</button>'
+    + '<button class="mbtn g" id="url-copy" style="width:100%;padding:13px;font-size:15px;text-align:left;display:flex;align-items:center;gap:10px">'
+    + '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'
+    + 'コピー</button>'
+    + '</div>'
+    + '<div class="mfoot"><button class="mbtn g" onclick="closeModal()">キャンセル</button></div>'
+    + '</div>';
+
+  ov.addEventListener('click', function(e) { if (e.target === ov) closeModal(); });
+  document.body.appendChild(ov);
+
+  document.getElementById('url-open').addEventListener('click', function() {
+    closeModal();
+    window.open(text, '_blank', 'noopener,noreferrer');
+    // カウントアップ
+    const item = items.find(function(i) { return i.text === text; });
+    if (item) {
+      const newCopies = (item.copies || 0) + 1;
+      const newLastUsed = now();
+      item.copies = newCopies; item.lastUsed = newLastUsed;
+      renderList();
+      textToKey(text).then(function(key) {
+        fdb.ref('clips/'+key).update({ copies: newCopies, lastUsed: newLastUsed });
+      });
+    }
+  });
+
+  document.getElementById('url-copy').addEventListener('click', function() {
+    closeModal();
+    copyItemByText(text);
+  });
+}
+
 // ── Delete ────────────────────────────────────────────────────────────────────
 function deleteItemByText(text) {
   const item = items.find(i => i.text === text);
@@ -544,6 +596,18 @@ function mergeSelected() {
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(merged).catch(function() { fallbackCopy(merged); });
   } else { fallbackCopy(merged); }
+  // 選択した各アイテムのカウントアップ
+  selected.forEach(function(text) {
+    const item = items.find(function(i) { return i.text === text; });
+    if (!item) return;
+    const newCopies = (item.copies || 0) + 1;
+    const newLastUsed = now();
+    item.copies = newCopies; item.lastUsed = newLastUsed;
+    textToKey(text).then(function(key) {
+      fdb.ref('clips/'+key).update({ copies: newCopies, lastUsed: newLastUsed });
+    });
+  });
+  renderList();
   toast(selected.length + '件を統合してコピー ✓'); clearSelect();
 }
 
@@ -657,6 +721,7 @@ function renderList() {
         e.stopPropagation(); changeTabByText(text); return;
       }
       if (selected.length > 0) toggleSelectByText(text);
+      else if (isUrl(text)) showUrlActionSheet(text);
       else copyItemByText(text);
     });
   });
