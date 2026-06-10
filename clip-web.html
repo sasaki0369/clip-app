@@ -459,7 +459,8 @@ async function saveEdit(b64orig) {
   const memoEl = document.getElementById('edit-memo');
   const newMemo = memoEl ? memoEl.value.trim() : (item.memo || '');
 
-  if (newText === origText && newTab === item.tab && newMemo === (item.memo || '')) {
+  const currentMemo = (item.memo == null || item.memo === undefined) ? '' : String(item.memo);
+  if (newText === origText && newTab === item.tab && newMemo === currentMemo) {
     toast('変更なし'); return;
   }
 
@@ -487,7 +488,8 @@ async function saveEdit(b64orig) {
     // タブ・メモのみ変更
     const updates = {};
     if (newTab !== item.tab) { item.tab = newTab; updates.tab = newTab; }
-    if (newMemo !== (item.memo || '')) { item.memo = newMemo; updates.memo = newMemo; }
+    const curMemo = (item.memo == null || item.memo === undefined) ? '' : String(item.memo);
+    if (newMemo !== curMemo) { item.memo = newMemo; updates.memo = newMemo; }
     if (Object.keys(updates).length > 0) {
       textToKey(origText).then(function(key) {
         fdb.ref('clips/'+key).update(updates);
@@ -919,13 +921,9 @@ function parseCSVAll(raw) {
 
 // ── スワイプでタブ切り替え ────────────────────────────────────────────────────
 (function() {
-  var swipeStartX = 0;
-  var swipeStartY = 0;
-  var swipeTarget = null;
+  var sx = 0, sy = 0, sTarget = null, sTracking = false;
 
-  function getAllTabs() {
-    return ['すべて'].concat(settings.tabs);
-  }
+  function getAllTabs() { return ['すべて'].concat(settings.tabs); }
 
   function swipeToTab(dir) {
     var tabs = getAllTabs();
@@ -933,7 +931,6 @@ function parseCSVAll(raw) {
     var next = idx + dir;
     if (next < 0 || next >= tabs.length) return;
     switchTab(tabs[next]);
-    // タブボタンを横スクロールして見えるようにする
     var tabRow = document.getElementById('tabs-row');
     if (tabRow) {
       var btn = tabRow.querySelectorAll('.tab-btn')[next];
@@ -941,48 +938,49 @@ function parseCSVAll(raw) {
     }
   }
 
+  // タッチ開始：#app全体で受け取る
   document.addEventListener('touchstart', function(e) {
-    // モーダルが開いている場合はスワイプ無効
-    if (document.getElementById('modal-ov') || document.getElementById('confirm-ov')) return;
+    if (document.getElementById('modal-ov') || document.getElementById('confirm-ov')) {
+      sTracking = false; return;
+    }
+    var tag = e.target ? e.target.tagName : '';
+    if (tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'BUTTON') {
+      sTracking = false; return;
+    }
     var t = e.touches[0];
-    swipeStartX = t.clientX;
-    swipeStartY = t.clientY;
-    swipeTarget = e.target;
+    sx = t.clientX; sy = t.clientY;
+    sTarget = e.target;
+    sTracking = true;
   }, { passive: true });
 
   document.addEventListener('touchend', function(e) {
+    if (!sTracking) return;
+    sTracking = false;
     if (document.getElementById('modal-ov') || document.getElementById('confirm-ov')) return;
-    // テキストエリアやinput上のスワイプは無効
-    if (swipeTarget && (swipeTarget.tagName === 'TEXTAREA' || swipeTarget.tagName === 'INPUT')) return;
     var t = e.changedTouches[0];
-    var dx = t.clientX - swipeStartX;
-    var dy = t.clientY - swipeStartY;
-    // 横方向が縦方向より大きく、かつ60px以上のスワイプ
-    if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
-    if (dx < 0) swipeToTab(1);   // 左スワイプ → 次のタブ
-    else        swipeToTab(-1);  // 右スワイプ → 前のタブ
+    var dx = t.clientX - sx;
+    var dy = t.clientY - sy;
+    // 横>縦 かつ 50px以上
+    if (Math.abs(dx) < 50) return;
+    if (Math.abs(dy) > Math.abs(dx) * 0.8) return;
+    if (dx < 0) swipeToTab(1);
+    else        swipeToTab(-1);
   }, { passive: true });
 
-  // PCのマウスドラッグにも対応
-  var mouseStartX = 0;
-  var mouseStartY = 0;
-  var isDragging = false;
-
-  var listEl = document.getElementById('list');
+  // PCマウスドラッグ
+  var mx = 0, my = 0, mDrag = false;
   document.addEventListener('mousedown', function(e) {
+    var tag = e.target ? e.target.tagName : '';
+    if (tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'BUTTON') return;
     if (document.getElementById('modal-ov')) return;
-    if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
-    mouseStartX = e.clientX;
-    mouseStartY = e.clientY;
-    isDragging = true;
+    mx = e.clientX; my = e.clientY; mDrag = true;
   });
   document.addEventListener('mouseup', function(e) {
-    if (!isDragging) return;
-    isDragging = false;
+    if (!mDrag) return; mDrag = false;
     if (document.getElementById('modal-ov')) return;
-    var dx = e.clientX - mouseStartX;
-    var dy = e.clientY - mouseStartY;
-    if (Math.abs(dx) < 80 || Math.abs(dx) < Math.abs(dy) * 2) return;
+    var dx = e.clientX - mx;
+    var dy = e.clientY - my;
+    if (Math.abs(dx) < 80 || Math.abs(dy) > Math.abs(dx) * 0.8) return;
     if (dx < 0) swipeToTab(1);
     else        swipeToTab(-1);
   });
