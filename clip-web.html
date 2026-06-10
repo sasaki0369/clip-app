@@ -277,6 +277,8 @@ fdb.ref('deleted').once('value', function(delSnap) {
       if (deletedKeys.has(child.key)) return;
       const r = child.val();
       if (!r || !r.text || !r.lastUsed || r.lastUsed < cut) return;
+      // memoフィールドがなければ空文字で補完
+      if (r.memo === undefined) r.memo = '';
       next.push(r); // Firebaseを常にsource of truth
     });
     items = next;
@@ -325,7 +327,7 @@ function addItem(text, tab) {
       fdb.ref('clips/'+key).update({ copies: exCopies, lastUsed: exLastUsed });
     });
   } else {
-    const item = { text: t, tab: tab || settings.tabs[0] || '未分類', copies: 1, createdAt: now(), lastUsed: now() };
+    const item = { text: t, tab: tab || settings.tabs[0] || '未分類', copies: 1, createdAt: now(), lastUsed: now(), memo: '' };
     items.unshift(item); renderList();
     textToKey(t).then(function(key) {
       // 削除済みリストから除去してから保存（再追加を許可）
@@ -408,6 +410,10 @@ function editItemByText(text) {
       }).join('')
     + '</div>'
     + '</div>'
+    + '<div class="msec">'
+    + '<span class="mlabel">メモ（補足・解説）</span>'
+    + '<textarea id="edit-memo" class="minput" rows="3" style="resize:vertical;line-height:1.6;font-size:13px" placeholder="メモを入力（省略可）">'+escForAttr(item.memo||'')+'</textarea>'
+    + '</div>'
     + '<div class="mfoot">'
     + '<button class="mbtn g" onclick="closeModal()">キャンセル</button>'
     + '<button class="mbtn p" id="save-edit-btn">保存</button>'
@@ -451,35 +457,41 @@ async function saveEdit(b64orig) {
 
   closeModal();
 
-  if (newText === origText && newTab === item.tab) {
+  const memoEl = document.getElementById('edit-memo');
+  const newMemo = memoEl ? memoEl.value.trim() : (item.memo || '');
+
+  if (newText === origText && newTab === item.tab && newMemo === (item.memo || '')) {
     toast('変更なし'); return;
   }
 
   if (newText !== origText) {
     // テキストが変わった場合：旧キーを削除して新キーで保存
     textToKey(origText).then(function(oldKey) {
-      // 旧データ削除
       deletedKeys.add(oldKey);
       fdb.ref('deleted/'+oldKey).set(now());
       fdb.ref('clips/'+oldKey).remove();
     });
     // ローカル更新
-    item.text = newText; item.tab = newTab; item.lastUsed = now();
+    item.text = newText; item.tab = newTab; item.memo = newMemo; item.lastUsed = now();
     // 新キーで保存
     textToKey(newText).then(function(newKey) {
       deletedKeys.delete(newKey);
       fdb.ref('deleted/'+newKey).remove();
       fdb.ref('clips/'+newKey).set({
-        text: newText, tab: newTab,
+        text: newText, tab: newTab, memo: newMemo,
         copies: item.copies, createdAt: item.createdAt, lastUsed: item.lastUsed
       });
     });
   } else {
-    // タブだけ変わった場合
-    item.tab = newTab;
-    textToKey(origText).then(function(key) {
-      fdb.ref('clips/'+key).update({ tab: newTab });
-    });
+    // タブ・メモのみ変更
+    const updates = {};
+    if (newTab !== item.tab) { item.tab = newTab; updates.tab = newTab; }
+    if (newMemo !== (item.memo || '')) { item.memo = newMemo; updates.memo = newMemo; }
+    if (Object.keys(updates).length > 0) {
+      textToKey(origText).then(function(key) {
+        fdb.ref('clips/'+key).update(updates);
+      });
+    }
   }
 
   renderList(); toast('保存しました');
@@ -690,7 +702,9 @@ function renderList() {
       + '<span class="tab-badge" data-action="tab">'+esc(item.tab)+'</span>'
       + '<span class="meta-date">'+fmtDate(item.lastUsed)+'</span>'
       + '<span class="meta-copies">×'+item.copies+'</span>'
-      + '</div></div>'
+      + '</div>'
+      + (item.memo ? '<div class="card-memo">'+esc(item.memo)+'</div>' : '')
+      + '</div>'
       + '<div class="card-actions">'
       + (isSel
         ? '<div class="sel-num">'+(si+1)+'</div>'
