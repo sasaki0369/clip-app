@@ -62,7 +62,7 @@
   .tab-badge:hover{color:var(--text);border-color:var(--border2)}
   .meta-date{font-size:11px;color:var(--muted);font-family:var(--m)}
   .meta-copies{font-size:11px;color:var(--muted);font-family:var(--m);margin-left:auto}
-  .card-actions{display:flex;flex-direction:column;align-items:center;gap:4px;opacity:0;transition:opacity .12s}
+  .card-actions{display:flex;flex-direction:column;align-items:center;gap:4px;opacity:1;transition:opacity .12s}
   .card:hover .card-actions,.card.selected .card-actions{opacity:1}
   @media(hover:none){.card-actions{opacity:1}}
   .sel-num{width:20px;height:20px;border-radius:50%;background:var(--text);color:#fff;font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:center}
@@ -455,16 +455,20 @@ async function saveEdit(b64orig) {
   const item = items.find(function(i) { return i.text === origText; });
   if (!item) { closeModal(); return; }
 
-  // closeModal()の前にDOMから値を取得（モーダルが消えると取得不可になる）
+  // DOMから値を取得（closeModal()の前に必ず取得する）
   const memoEl = document.getElementById('edit-memo');
-  const newMemo = memoEl ? memoEl.value.trim() : (item.memo || '');
+  const newMemo = memoEl ? memoEl.value : '';  // trim()しない（空白も有効）
 
+  // 変更チェック
   const currentMemo = (item.memo == null || item.memo === undefined) ? '' : String(item.memo);
-  if (newText === origText && newTab === item.tab && newMemo === currentMemo) {
+  const currentTab = item.tab || '';
+
+  // ここでcloseModal（DOM取得済みなので安全）
+  closeModal();
+
+  if (newText === origText && newTab === currentTab && newMemo.trim() === currentMemo) {
     toast('変更なし'); return;
   }
-
-  closeModal();
 
   if (newText !== origText) {
     // テキストが変わった場合：旧キーを削除して新キーで保存
@@ -533,7 +537,15 @@ function showUrlActionSheet(text) {
 
   document.getElementById('url-open').addEventListener('click', function() {
     closeModal();
-    window.open(text, '_blank', 'noopener,noreferrer');
+    // スマホ互換: aタグ経由で開く（window.openはポップアップブロックされる場合がある）
+    const a = document.createElement('a');
+    a.href = text;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
     // カウントアップ
     const item = items.find(function(i) { return i.text === text; });
     if (item) {
@@ -963,6 +975,8 @@ function parseCSVAll(raw) {
     // 横>縦 かつ 50px以上
     if (Math.abs(dx) < 50) return;
     if (Math.abs(dy) > Math.abs(dx) * 0.8) return;
+    // スワイプ成立 → longTimerをキャンセルしてタブ切り替え
+    clearTimeout(longTimer);
     if (dx < 0) swipeToTab(1);
     else        swipeToTab(-1);
   }, { passive: true });
