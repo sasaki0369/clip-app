@@ -917,6 +917,77 @@ function parseCSVAll(raw) {
   return records.filter(function(r) { return r.some(function(f){return f.trim();}); });
 }
 
+// ── スワイプでタブ切り替え ────────────────────────────────────────────────────
+(function() {
+  var swipeStartX = 0;
+  var swipeStartY = 0;
+  var swipeTarget = null;
+
+  function getAllTabs() {
+    return ['すべて'].concat(settings.tabs);
+  }
+
+  function swipeToTab(dir) {
+    var tabs = getAllTabs();
+    var idx = tabs.indexOf(activeTab);
+    var next = idx + dir;
+    if (next < 0 || next >= tabs.length) return;
+    switchTab(tabs[next]);
+    // タブボタンを横スクロールして見えるようにする
+    var tabRow = document.getElementById('tabs-row');
+    if (tabRow) {
+      var btn = tabRow.querySelectorAll('.tab-btn')[next];
+      if (btn) btn.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+    }
+  }
+
+  document.addEventListener('touchstart', function(e) {
+    // モーダルが開いている場合はスワイプ無効
+    if (document.getElementById('modal-ov') || document.getElementById('confirm-ov')) return;
+    var t = e.touches[0];
+    swipeStartX = t.clientX;
+    swipeStartY = t.clientY;
+    swipeTarget = e.target;
+  }, { passive: true });
+
+  document.addEventListener('touchend', function(e) {
+    if (document.getElementById('modal-ov') || document.getElementById('confirm-ov')) return;
+    // テキストエリアやinput上のスワイプは無効
+    if (swipeTarget && (swipeTarget.tagName === 'TEXTAREA' || swipeTarget.tagName === 'INPUT')) return;
+    var t = e.changedTouches[0];
+    var dx = t.clientX - swipeStartX;
+    var dy = t.clientY - swipeStartY;
+    // 横方向が縦方向より大きく、かつ60px以上のスワイプ
+    if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+    if (dx < 0) swipeToTab(1);   // 左スワイプ → 次のタブ
+    else        swipeToTab(-1);  // 右スワイプ → 前のタブ
+  }, { passive: true });
+
+  // PCのマウスドラッグにも対応
+  var mouseStartX = 0;
+  var mouseStartY = 0;
+  var isDragging = false;
+
+  var listEl = document.getElementById('list');
+  document.addEventListener('mousedown', function(e) {
+    if (document.getElementById('modal-ov')) return;
+    if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+    mouseStartX = e.clientX;
+    mouseStartY = e.clientY;
+    isDragging = true;
+  });
+  document.addEventListener('mouseup', function(e) {
+    if (!isDragging) return;
+    isDragging = false;
+    if (document.getElementById('modal-ov')) return;
+    var dx = e.clientX - mouseStartX;
+    var dy = e.clientY - mouseStartY;
+    if (Math.abs(dx) < 80 || Math.abs(dx) < Math.abs(dy) * 2) return;
+    if (dx < 0) swipeToTab(1);
+    else        swipeToTab(-1);
+  });
+})();
+
 // ── Init ─────────────────────────────────────────────────────────────────────
 loadSettings();
 renderTabs();
