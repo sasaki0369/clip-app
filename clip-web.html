@@ -455,14 +455,15 @@ async function saveEdit(b64orig) {
   const item = items.find(function(i) { return i.text === origText; });
   if (!item) { closeModal(); return; }
 
-  closeModal();
-
+  // closeModal()の前にDOMから値を取得（モーダルが消えると取得不可になる）
   const memoEl = document.getElementById('edit-memo');
   const newMemo = memoEl ? memoEl.value.trim() : (item.memo || '');
 
   if (newText === origText && newTab === item.tab && newMemo === (item.memo || '')) {
     toast('変更なし'); return;
   }
+
+  closeModal();
 
   if (newText !== origText) {
     // テキストが変わった場合：旧キーを削除して新キーで保存
