@@ -153,6 +153,11 @@
     </div>
     <div class="header-actions">
       <div class="sync-dot" id="sync-dot"></div>
+      <button class="icon-btn" id="sort-btn" onclick="showSortMenu()" title="並べ替え">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+          <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="15" y2="12"/><line x1="3" y1="18" x2="9" y2="18"/>
+        </svg>
+      </button>
       <button class="icon-btn" onclick="showSettings()">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
           <circle cx="12" cy="12" r="3"/>
@@ -214,7 +219,8 @@ const fdb = firebase.database();
 const SKEY = 'clip_settings_v4';
 let items    = [];
 let settings = { retentionDays: 30, tabs: ['仕事','メモ','URL','コード'] };
-let activeTab = 'すべて';
+let activeTabs = ['すべて']; // 複数選択対応
+let sortOrder = 'copies';    // 'copies' | 'createdAt' | 'lastUsed'
 let selected  = []; // textの配列
 let longTimer = null;
 let pendingText = null;
@@ -685,18 +691,40 @@ function renderTabs() {
   const row = document.getElementById('tabs-row');
   if (!row) return;
   row.innerHTML = ['すべて'].concat(settings.tabs).map(function(t) {
-    return '<button class="tab-btn '+(t===activeTab?'active':'')+'" onclick="switchTab(&quot;'+esc(t)+'&quot;)">'+esc(t)+'</button>';
+    const isActive = activeTabs.includes(t);
+    return '<button class="tab-btn '+(isActive?'active':'')+'" onclick="switchTab(&quot;'+esc(t)+'&quot;)">'+esc(t)+'</button>';
   }).join('');
 }
-function switchTab(t) { activeTab = t; renderTabs(); renderList(); }
+function switchTab(t) {
+  if (t === 'すべて') {
+    activeTabs = ['すべて'];
+  } else {
+    activeTabs = activeTabs.filter(function(x){ return x !== 'すべて'; });
+    if (activeTabs.includes(t)) {
+      activeTabs = activeTabs.filter(function(x){ return x !== t; });
+      if (activeTabs.length === 0) activeTabs = ['すべて'];
+    } else {
+      activeTabs.push(t);
+    }
+  }
+  renderTabs(); renderList();
+}
 
 // ── Render List ───────────────────────────────────────────────────────────────
 function renderList() {
   const q = (document.getElementById('search') || {value:''}).value.toLowerCase();
   const display = items
-    .filter(function(i) { return activeTab === 'すべて' || i.tab === activeTab; })
+    .filter(function(i) {
+      if (activeTabs.includes('すべて')) return true;
+      return activeTabs.includes(i.tab);
+    })
     .filter(function(i) { return !q || i.text.toLowerCase().includes(q); })
-    .sort(function(a,b) { return b.copies - a.copies || b.lastUsed - a.lastUsed; });
+    .sort(function(a,b) {
+      if (sortOrder === 'copies')    return b.copies - a.copies || b.lastUsed - a.lastUsed;
+      if (sortOrder === 'createdAt') return b.createdAt - a.createdAt;
+      if (sortOrder === 'lastUsed')  return b.lastUsed - a.lastUsed;
+      return 0;
+    });
 
   const list = document.getElementById('list');
   if (!list) return;
@@ -715,7 +743,8 @@ function renderList() {
       + '<div class="card-text">'+esc(trunc(item.text))+'</div>'
       + '<div class="card-meta">'
       + '<span class="tab-badge" data-action="tab">'+esc(item.tab)+'</span>'
-      + '<span class="meta-date">'+fmtDate(item.lastUsed)+'</span>'
+      + '<span class="meta-date">登録 '+fmtDate(item.createdAt||item.lastUsed)+'</span>'
+      + '<span class="meta-date" style="color:var(--muted)">最終 '+fmtDate(item.lastUsed)+'</span>'
       + '<span class="meta-copies">×'+item.copies+'</span>'
       + '</div>'
       + (item.memo ? '<div class="card-memo">'+esc(item.memo)+'</div>' : '')
@@ -939,7 +968,7 @@ function parseCSVAll(raw) {
 
   function swipeToTab(dir) {
     var tabs = getAllTabs();
-    var idx = tabs.indexOf(activeTab);
+    var idx = tabs.indexOf(activeTabs.includes('すべて') ? 'すべて' : activeTabs[activeTabs.length-1]);
     var next = idx + dir;
     if (next < 0 || next >= tabs.length) return;
     switchTab(tabs[next]);
