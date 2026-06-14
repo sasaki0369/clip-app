@@ -816,6 +816,29 @@ function confirm2(title, msg, onOk) {
 }
 function closeConfirm() { var el = document.getElementById('confirm-ov'); if (el) el.remove(); }
 
+// ── 並べ替え ─────────────────────────────────────────────────────────────────
+function showSortMenu() {
+  const opts = [
+    { key: 'copies',    label: 'コピー回数順（多い順）' },
+    { key: 'createdAt', label: '登録日順（新しい順）' },
+    { key: 'lastUsed',  label: '最新コピー日順（新しい順）' },
+  ];
+  const html2 = opts.map(function(o) {
+    const active = sortOrder === o.key;
+    return '<button class="mbtn '+(active?'p':'g')+'" style="width:100%;text-align:left;margin-bottom:8px;padding:12px 16px;display:flex;align-items:center;gap:10px;font-size:14px" onclick="setSortOrder(&quot;'+o.key+'&quot;)">'
+      + (active ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>' : '<span style="width:14px;display:inline-block"></span>')
+      + esc(o.label) + '</button>';
+  }).join('');
+  showSheet('並べ替え', html2);
+}
+function setSortOrder(key) {
+  sortOrder = key;
+  closeModal();
+  renderList();
+  const btn = document.getElementById('sort-btn');
+  if (btn) btn.style.color = (sortOrder !== 'copies') ? 'var(--text)' : '';
+}
+
 // ── Settings ──────────────────────────────────────────────────────────────────
 function showSettings() {
   const tabs = settings.tabs;
