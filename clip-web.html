@@ -140,6 +140,7 @@
 <!-- Firebase CDN（モジュールなし・compat版） -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 
 <div id="app">
   <header class="header">
@@ -214,6 +215,32 @@ firebase.initializeApp({
   appId: "1:331437837783:web:2a69acac7423eb79440f92"
 });
 const fdb = firebase.database();
+const fauth = firebase.auth();
+
+// ── 匿名認証 ──────────────────────────────────────────────────────────────────
+// 認証完了後にデータの読み書きを開始する
+let authReady = false;
+const pendingAfterAuth = [];
+
+fauth.onAuthStateChanged(function(user) {
+  if (user) {
+    authReady = true;
+    setSyncStatus('busy');
+    pendingAfterAuth.forEach(function(fn) { fn(); });
+    pendingAfterAuth.length = 0;
+  }
+});
+
+fauth.signInAnonymously().catch(function(err) {
+  console.error('認証エラー:', err);
+  setSyncStatus('err');
+  toast('認証に失敗しました');
+});
+
+function whenAuthReady(fn) {
+  if (authReady) fn();
+  else pendingAfterAuth.push(fn);
+}
 
 // ── State ─────────────────────────────────────────────────────────────────────
 const SKEY = 'clip_settings_v4';
@@ -270,7 +297,8 @@ function setSyncStatus(s) {
   if (dot) dot.className = 'sync-dot ' + s;
 }
 
-// ── Firebase初期化（削除済みキーを先に読んでからclipsを監視） ─────────────────
+// ── Firebase初期化（認証完了後、削除済みキーを先に読んでからclipsを監視） ─────
+whenAuthReady(function() {
 fdb.ref('deleted').once('value', function(delSnap) {
   const delData = delSnap.val() || {};
   Object.keys(delData).forEach(k => deletedKeys.add(k));
@@ -318,6 +346,7 @@ function pushSettings() {
   fdb.ref('app_settings').set({ tabs: settings.tabs, retentionDays: settings.retentionDays });
   setTimeout(function() { ignoreSettingsUpdate = false; }, 3000);
 }
+}); // whenAuthReady終了
 
 // ── Add ───────────────────────────────────────────────────────────────────────
 function addItem(text, tab) {
