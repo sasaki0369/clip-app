@@ -313,6 +313,9 @@ fdb.ref('deleted').once('value', function(delSnap) {
       if (!r || !r.text || !r.lastUsed || r.lastUsed < cut) return;
       // memoフィールドがなければ空文字で補完
       if (r.memo === undefined) r.memo = '';
+      // tabs配列がなければtabから生成（後方互換）
+      if (!Array.isArray(r.tabs)) r.tabs = r.tab ? [r.tab] : [];
+      if (!r.tab && r.tabs.length > 0) r.tab = r.tabs[0];
       next.push(r); // Firebaseを常にsource of truth
     });
     items = next;
@@ -362,7 +365,8 @@ function addItem(text, tab) {
       fdb.ref('clips/'+key).update({ copies: exCopies, lastUsed: exLastUsed });
     });
   } else {
-    const item = { text: t, tab: tab || settings.tabs[0] || '未分類', copies: 1, createdAt: now(), lastUsed: now(), memo: '' };
+    const initTab = tab || settings.tabs[0] || '未分類';
+    const item = { text: t, tab: initTab, tabs: [initTab], copies: 1, createdAt: now(), lastUsed: now(), memo: '' };
     items.unshift(item); renderList();
     textToKey(t).then(function(key) {
       // 削除済みリストから除去してから保存（再追加を許可）
@@ -438,10 +442,13 @@ function editItemByText(text) {
     + '<textarea id="edit-textarea" class="minput" rows="6" style="resize:vertical;line-height:1.6;font-family:var(--mono);font-size:13px">'+escForAttr(text)+'</textarea>'
     + '</div>'
     + '<div class="msec">'
-    + '<span class="mlabel">タブ</span>'
+    + '<span class="mlabel">タブ（複数選択可）</span>'
     + '<div style="display:flex;gap:6px;flex-wrap:wrap" id="edit-tab-btns">'
     + settings.tabs.map(function(t) {
-        const tb64 = btoa(unescape(encodeURIComponent(t))); return '<button class="mbtn '+(t===item.tab?'p':'g')+'" data-tab="'+tb64+'" data-action="etab" style="font-size:12px;padding:5px 10px">'+esc(t)+'</button>';
+        const itemTabs = Array.isArray(item.tabs) && item.tabs.length > 0 ? item.tabs : [item.tab];
+        const isActive = itemTabs.includes(t);
+        const tb64 = btoa(unescape(encodeURIComponent(t)));
+        return '<button class="mbtn '+(isActive?'p':'g')+'" data-tab="'+tb64+'" data-action="etab" style="font-size:12px;padding:5px 10px">'+esc(t)+'</button>';
       }).join('')
     + '</div>'
     + '</div>'
@@ -463,13 +470,11 @@ function editItemByText(text) {
   const saveBtn = document.getElementById('save-edit-btn');
   if (saveBtn) saveBtn.addEventListener('click', function() { saveEdit(b64); });
 
-  // タブボタンのクリックイベントを設定
+  // タブボタンのクリックイベントを設定（複数選択トグル）
   document.querySelectorAll('#edit-tab-btns [data-action="etab"]').forEach(function(btn) {
     btn.addEventListener('click', function() {
-      document.querySelectorAll('#edit-tab-btns [data-action="etab"]').forEach(function(b) {
-        b.className = 'mbtn g';
-      });
-      btn.className = 'mbtn p';
+      const isActive = btn.className.indexOf('mbtn p') >= 0;
+      btn.className = isActive ? 'mbtn g' : 'mbtn p';
     });
   });
 }
@@ -481,29 +486,33 @@ async function saveEdit(b64orig) {
   const newText = el.value.trim();
   if (!newText) { toast('テキストが空です'); return; }
 
-  // 選択中のタブを取得
-  const activeTabBtn = document.querySelector('#edit-tab-btns [data-action="etab"].p');
-  const newTab = activeTabBtn
-    ? decodeURIComponent(escape(atob(activeTabBtn.dataset.tab)))
-    : settings.tabs[0] || '未分類';
+  // 選択中の全タブを取得（複数選択対応）
+  const activeTabBtns = document.querySelectorAll('#edit-tab-btns [data-action="etab"].p');
+  let newTabs = Array.prototype.map.call(activeTabBtns, function(btn) {
+    return decodeURIComponent(escape(atob(btn.dataset.tab)));
+  });
+  if (newTabs.length === 0) newTabs = [settings.tabs[0] || '未分類'];
 
   const item = items.find(function(i) { return i.text === origText; });
   if (!item) { closeModal(); return; }
 
   // DOMから値を取得（closeModal()の前に必ず取得する）
   const memoEl = document.getElementById('edit-memo');
-  const newMemo = memoEl ? memoEl.value : '';  // trim()しない（空白も有効）
+  const newMemo = memoEl ? memoEl.value : '';
 
   // 変更チェック
   const currentMemo = (item.memo == null || item.memo === undefined) ? '' : String(item.memo);
-  const currentTab = item.tab || '';
+  const currentTabs = Array.isArray(item.tabs) && item.tabs.length > 0 ? item.tabs : [item.tab];
+  const tabsChanged = newTabs.length !== currentTabs.length ||
+    !newTabs.every(function(t) { return currentTabs.includes(t); });
 
-  // ここでcloseModal（DOM取得済みなので安全）
   closeModal();
 
-  if (newText === origText && newTab === currentTab && newMemo.trim() === currentMemo) {
+  if (newText === origText && !tabsChanged && newMemo.trim() === currentMemo) {
     toast('変更なし'); return;
   }
+
+  const newTab = newTabs[0]; // 後方互換：先頭タブをtabフィールドにも保持
 
   if (newText !== origText) {
     // テキストが変わった場合：旧キーを削除して新キーで保存
@@ -513,20 +522,20 @@ async function saveEdit(b64orig) {
       fdb.ref('clips/'+oldKey).remove();
     });
     // ローカル更新
-    item.text = newText; item.tab = newTab; item.memo = newMemo; item.lastUsed = now();
+    item.text = newText; item.tab = newTab; item.tabs = newTabs; item.memo = newMemo; item.lastUsed = now();
     // 新キーで保存
     textToKey(newText).then(function(newKey) {
       deletedKeys.delete(newKey);
       fdb.ref('deleted/'+newKey).remove();
       fdb.ref('clips/'+newKey).set({
-        text: newText, tab: newTab, memo: newMemo,
+        text: newText, tab: newTab, tabs: newTabs, memo: newMemo,
         copies: item.copies, createdAt: item.createdAt, lastUsed: item.lastUsed
       });
     });
   } else {
     // タブ・メモのみ変更
     const updates = {};
-    if (newTab !== item.tab) { item.tab = newTab; updates.tab = newTab; }
+    if (tabsChanged) { item.tab = newTab; item.tabs = newTabs; updates.tab = newTab; updates.tabs = newTabs; }
     const curMemo = (item.memo == null || item.memo === undefined) ? '' : String(item.memo);
     if (newMemo !== curMemo) { item.memo = newMemo; updates.memo = newMemo; }
     if (Object.keys(updates).length > 0) {
@@ -634,8 +643,9 @@ function applyTabChange(b64text, tb64) {
   const tab  = decodeURIComponent(escape(atob(tb64)));
   const item = items.find(i => i.text === text);
   if (!item) return;
-  item.tab = tab; renderList(); toast('「'+tab+'」に移動しました');
-  textToKey(text).then(function(key) { fdb.ref('clips/'+key).update({ tab: tab }); });
+  // タブバッジからのクリックは単一タブとして設定（既存のtabs配列を置き換え）
+  item.tab = tab; item.tabs = [tab]; renderList(); toast('「'+tab+'」に移動しました');
+  textToKey(text).then(function(key) { fdb.ref('clips/'+key).update({ tab: tab, tabs: [tab] }); });
 }
 
 // ── Select ────────────────────────────────────────────────────────────────────
@@ -725,17 +735,8 @@ function renderTabs() {
   }).join('');
 }
 function switchTab(t) {
-  if (t === 'すべて') {
-    activeTabs = ['すべて'];
-  } else {
-    activeTabs = activeTabs.filter(function(x){ return x !== 'すべて'; });
-    if (activeTabs.includes(t)) {
-      activeTabs = activeTabs.filter(function(x){ return x !== t; });
-      if (activeTabs.length === 0) activeTabs = ['すべて'];
-    } else {
-      activeTabs.push(t);
-    }
-  }
+  // 上部タブは単一選択のみ
+  activeTabs = [t];
   renderTabs(); renderList();
 }
 
@@ -745,7 +746,8 @@ function renderList() {
   const display = items
     .filter(function(i) {
       if (activeTabs.includes('すべて')) return true;
-      return activeTabs.includes(i.tab);
+      const itemTabs = Array.isArray(i.tabs) ? i.tabs : [i.tab];
+      return itemTabs.some(function(t) { return activeTabs.includes(t); });
     })
     .filter(function(i) { return !q || i.text.toLowerCase().includes(q); })
     .sort(function(a,b) {
@@ -771,7 +773,9 @@ function renderList() {
       + '<div class="card-body">'
       + '<div class="card-text">'+esc(trunc(item.text))+'</div>'
       + '<div class="card-meta">'
-      + '<span class="tab-badge" data-action="tab">'+esc(item.tab)+'</span>'
+      + (Array.isArray(item.tabs) && item.tabs.length > 0 ? item.tabs : [item.tab]).map(function(t) {
+          return '<span class="tab-badge" data-action="tab">'+esc(t)+'</span>';
+        }).join('')
       + '<span class="meta-date">登録 '+fmtDate(item.createdAt||item.lastUsed)+'</span>'
       + '<span class="meta-date" style="color:var(--muted)">最終 '+fmtDate(item.lastUsed)+'</span>'
       + '<span class="meta-copies">×'+item.copies+'</span>'
@@ -975,14 +979,11 @@ function importCSV() {
         const lastUsed  = parseInt(r[4])||now();
         if (!items.find(function(i) { return i.text===text; })) {
           textToKey(text).then(function(key) {
-            // 削除済みから除去（再インポートを許可）
             deletedKeys.delete(key);
             fdb.ref('deleted/'+key).remove();
-            // Firebaseに書き込み
-            fdb.ref('clips/'+key).set({text:text,tab:tab,copies:copies,createdAt:createdAt,lastUsed:lastUsed});
+            fdb.ref('clips/'+key).set({text:text,tab:tab,tabs:[tab],copies:copies,createdAt:createdAt,lastUsed:lastUsed});
           });
-          // ローカルにも即時追加
-          items.push({text:text,tab:tab,copies:copies,createdAt:createdAt,lastUsed:lastUsed});
+          items.push({text:text,tab:tab,tabs:[tab],copies:copies,createdAt:createdAt,lastUsed:lastUsed});
           added++;
         } else skipped++;
       });
