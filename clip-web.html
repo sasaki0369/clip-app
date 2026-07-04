@@ -312,10 +312,13 @@ fdb.ref('deleted').once('value', function(delSnap) {
       const r = child.val();
       if (!r || !r.text || !r.lastUsed || r.lastUsed < cut) return;
       // memoフィールドがなければ空文字で補完
-      if (r.memo === undefined) r.memo = '';
-      // tabs配列がなければtabから生成（後方互換）
-      if (!Array.isArray(r.tabs)) r.tabs = r.tab ? [r.tab] : [];
-      if (!r.tab && r.tabs.length > 0) r.tab = r.tabs[0];
+      // 必須フィールドの補完（Firebaseに存在しない場合のデフォルト値）
+      if (r.memo === undefined || r.memo === null) r.memo = '';
+      if (!Array.isArray(r.tabs) || r.tabs.length === 0) {
+        r.tabs = r.tab ? [r.tab] : ['未分類'];
+      }
+      if (!r.tab) r.tab = r.tabs[0];
+      if (!r.createdAt) r.createdAt = r.lastUsed;
       next.push(r); // Firebaseを常にsource of truth
     });
     items = next;
@@ -537,11 +540,14 @@ async function saveEdit(b64orig) {
     const updates = {};
     if (tabsChanged) { item.tab = newTab; item.tabs = newTabs; updates.tab = newTab; updates.tabs = newTabs; }
     const curMemo = (item.memo == null || item.memo === undefined) ? '' : String(item.memo);
-    if (newMemo !== curMemo) { item.memo = newMemo; updates.memo = newMemo; }
+    const trimmedNewMemo = newMemo.trim();
+    if (trimmedNewMemo !== curMemo) { item.memo = trimmedNewMemo; updates.memo = trimmedNewMemo; }
     if (Object.keys(updates).length > 0) {
       textToKey(origText).then(function(key) {
         fdb.ref('clips/'+key).update(updates);
       });
+    } else {
+      toast('変更なし'); return;
     }
   }
 
