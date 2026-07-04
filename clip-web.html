@@ -247,7 +247,7 @@ const SKEY = 'clip_settings_v4';
 let items    = [];
 let settings = { retentionDays: 30, tabs: ['仕事','メモ','URL','コード'] };
 let activeTabs = ['すべて']; // 複数選択対応
-let sortOrder = 'copies';    // 'copies' | 'createdAt' | 'lastUsed'
+let sortOrder = localStorage.getItem('clip_sort_order') || 'copies'; // 永続化
 let selected  = []; // textの配列
 let longTimer = null;
 let pendingText = null;
@@ -866,6 +866,7 @@ function showSortMenu() {
 }
 function setSortOrder(key) {
   sortOrder = key;
+  localStorage.setItem('clip_sort_order', key); // 永続化
   closeModal();
   renderList();
   const btn = document.getElementById('sort-btn');
@@ -1087,6 +1088,11 @@ loadSettings();
 renderTabs();
 renderList();
 setSyncStatus('busy');
+// 起動時にソートボタンの色を復元
+(function() {
+  const btn = document.getElementById('sort-btn');
+  if (btn && sortOrder !== 'copies') btn.style.color = 'var(--text)';
+})();
 </script>
 </body>
 </html>
