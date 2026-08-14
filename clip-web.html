@@ -137,12 +137,29 @@
 </style>
 </head>
 <body>
+<!-- ログイン画面 -->
+<div id="login-screen" style="display:none;position:fixed;inset:0;background:#fff;flex-direction:column;align-items:center;justify-content:center;gap:24px;z-index:1000">
+  <div style="display:flex;align-items:center;gap:10px;font-size:20px;font-weight:600;color:#111">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round">
+      <rect x="8" y="2" width="8" height="4" rx="1.5"/>
+      <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
+      <line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="15" y2="16"/>
+    </svg>
+    Clip
+  </div>
+  <p style="color:#999;font-size:14px">クリップボード管理アプリ</p>
+  <button onclick="signInWithGoogle()" style="display:flex;align-items:center;gap:10px;padding:12px 24px;border:1px solid #ddd;border-radius:10px;background:#fff;font-size:15px;font-weight:500;cursor:pointer;color:#111;box-shadow:0 2px 8px rgba(0,0,0,.08)">
+    <svg width="18" height="18" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+    Googleでログイン
+  </button>
+</div>
+
 <!-- Firebase CDN（モジュールなし・compat版） -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 
-<div id="app">
+<div id="app" style="display:none">
   <header class="header">
     <div class="logo">
       <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
@@ -206,35 +223,46 @@
 <script>
 // ── Firebase compat初期化 ─────────────────────────────────────────────────────
 firebase.initializeApp({
-  apiKey: "AIzaSyCxWX1r95IrfTIZXQZvWtzzn7CM6Ps9oLQ",
-  authDomain: "clip-app2.firebaseapp.com",
-  databaseURL: "https://clip-app2-default-rtdb.firebaseio.com",
-  projectId: "clip-app2",
-  storageBucket: "clip-app2.firebasestorage.app",
-  messagingSenderId: "331437837783",
-  appId: "1:331437837783:web:2a69acac7423eb79440f92"
+  apiKey: "AIzaSyAxVn7JUuoBsNeSODksNYyEkd2W2E252_c",
+  authDomain: "life--log.firebaseapp.com",
+  databaseURL: "https://life--log-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "life--log",
+  storageBucket: "life--log.firebasestorage.app",
+  messagingSenderId: "790653257684",
+  appId: "1:790653257684:web:dd84bf5e0a38db328f3841"
 });
 const fdb = firebase.database();
 const fauth = firebase.auth();
 
-// ── 匿名認証 ──────────────────────────────────────────────────────────────────
-// 認証完了後にデータの読み書きを開始する
+// ── Google認証 ────────────────────────────────────────────────────────────────
 let authReady = false;
 const pendingAfterAuth = [];
 
 fauth.onAuthStateChanged(function(user) {
   if (user) {
+    // ログイン済み → 認証完了
     authReady = true;
+    document.getElementById('login-screen').style.display = 'none';
+    document.getElementById('app').style.display = 'flex';
     setSyncStatus('busy');
     pendingAfterAuth.forEach(function(fn) { fn(); });
     pendingAfterAuth.length = 0;
+  } else {
+    // 未ログイン → ログイン画面を表示
+    document.getElementById('login-screen').style.display = 'flex';
+    document.getElementById('app').style.display = 'none';
   }
 });
 
-fauth.signInAnonymously().catch(function(err) {
+function signInWithGoogle() {
+  const provider = new firebase.auth.GoogleAuthProvider();
+  fauth.signInWithRedirect(provider);
+}
+
+// リダイレクト後の結果を処理
+fauth.getRedirectResult().catch(function(err) {
   console.error('認証エラー:', err);
-  setSyncStatus('err');
-  toast('認証に失敗しました');
+  toast('ログインに失敗しました: ' + err.message);
 });
 
 function whenAuthReady(fn) {
@@ -299,12 +327,12 @@ function setSyncStatus(s) {
 
 // ── Firebase初期化（認証完了後、削除済みキーを先に読んでからclipsを監視） ─────
 whenAuthReady(function() {
-fdb.ref('deleted').once('value', function(delSnap) {
+fdb.ref('clipApp/deleted').once('value', function(delSnap) {
   const delData = delSnap.val() || {};
   Object.keys(delData).forEach(k => deletedKeys.add(k));
 
   // clips監視開始
-  fdb.ref('clips').on('value', function(snap) {
+  fdb.ref('clipApp/clips').on('value', function(snap) {
     const cut = now() - settings.retentionDays * 86400000;
     const next = [];
     snap.forEach(function(child) {
@@ -331,7 +359,7 @@ fdb.ref('deleted').once('value', function(delSnap) {
 });
 
 // 設定監視
-fdb.ref('app_settings').on('value', function(snap) {
+fdb.ref('clipApp/app_settings').on('value', function(snap) {
   if (ignoreSettingsUpdate) return;
   const data = snap.val();
   if (!data) return;
@@ -349,7 +377,7 @@ fdb.ref('app_settings').on('value', function(snap) {
 
 function pushSettings() {
   ignoreSettingsUpdate = true;
-  fdb.ref('app_settings').set({ tabs: settings.tabs, retentionDays: settings.retentionDays });
+  fdb.ref('clipApp/app_settings').set({ tabs: settings.tabs, retentionDays: settings.retentionDays });
   setTimeout(function() { ignoreSettingsUpdate = false; }, 3000);
 }
 }); // whenAuthReady終了
@@ -365,7 +393,7 @@ function addItem(text, tab) {
     ex.copies = exCopies; ex.lastUsed = exLastUsed;
     renderList();
     textToKey(t).then(function(key) {
-      fdb.ref('clips/'+key).update({ copies: exCopies, lastUsed: exLastUsed });
+      fdb.ref('clipApp/clips/'+key).update({ copies: exCopies, lastUsed: exLastUsed });
     });
   } else {
     const initTab = tab || settings.tabs[0] || '未分類';
@@ -374,8 +402,8 @@ function addItem(text, tab) {
     textToKey(t).then(function(key) {
       // 削除済みリストから除去してから保存（再追加を許可）
       deletedKeys.delete(key);
-      fdb.ref('deleted/'+key).remove();
-      fdb.ref('clips/'+key).set(item);
+      fdb.ref('clipApp/deleted/'+key).remove();
+      fdb.ref('clipApp/clips/'+key).set(item);
     });
   }
   toast('追加しました');
@@ -418,7 +446,7 @@ function copyItemByText(text) {
   renderList(); toast('コピーしました ✓');
   // Firebase更新（キャプチャした値を使う）
   textToKey(text).then(function(key) {
-    fdb.ref('clips/'+key).update({ copies: newCopies, lastUsed: newLastUsed });
+    fdb.ref('clipApp/clips/'+key).update({ copies: newCopies, lastUsed: newLastUsed });
   });
 }
 function fallbackCopy(text) {
@@ -544,7 +572,7 @@ async function saveEdit(b64orig) {
     if (trimmedNewMemo !== curMemo) { item.memo = trimmedNewMemo; updates.memo = trimmedNewMemo; }
     if (Object.keys(updates).length > 0) {
       textToKey(origText).then(function(key) {
-        fdb.ref('clips/'+key).update(updates);
+        fdb.ref('clipApp/clips/'+key).update(updates);
       });
     } else {
       toast('変更なし'); return;
@@ -604,7 +632,7 @@ function showUrlActionSheet(text) {
       item.copies = newCopies; item.lastUsed = newLastUsed;
       renderList();
       textToKey(text).then(function(key) {
-        fdb.ref('clips/'+key).update({ copies: newCopies, lastUsed: newLastUsed });
+        fdb.ref('clipApp/clips/'+key).update({ copies: newCopies, lastUsed: newLastUsed });
       });
     }
   });
@@ -626,8 +654,8 @@ function deleteItemByText(text) {
     updateSelectBar(); renderList(); toast('削除しました');
     textToKey(text).then(function(key) {
       deletedKeys.add(key);
-      fdb.ref('deleted/'+key).set(now());
-      fdb.ref('clips/'+key).remove();
+      fdb.ref('clipApp/deleted/'+key).set(now());
+      fdb.ref('clipApp/clips/'+key).remove();
     });
   });
 }
@@ -651,7 +679,7 @@ function applyTabChange(b64text, tb64) {
   if (!item) return;
   // タブバッジからのクリックは単一タブとして設定（既存のtabs配列を置き換え）
   item.tab = tab; item.tabs = [tab]; renderList(); toast('「'+tab+'」に移動しました');
-  textToKey(text).then(function(key) { fdb.ref('clips/'+key).update({ tab: tab, tabs: [tab] }); });
+  textToKey(text).then(function(key) { fdb.ref('clipApp/clips/'+key).update({ tab: tab, tabs: [tab] }); });
 }
 
 // ── Select ────────────────────────────────────────────────────────────────────
@@ -682,7 +710,7 @@ function mergeSelected() {
     const newLastUsed = now();
     item.copies = newCopies; item.lastUsed = newLastUsed;
     textToKey(text).then(function(key) {
-      fdb.ref('clips/'+key).update({ copies: newCopies, lastUsed: newLastUsed });
+      fdb.ref('clipApp/clips/'+key).update({ copies: newCopies, lastUsed: newLastUsed });
     });
   });
   renderList();
@@ -948,8 +976,8 @@ function clearAll() {
     texts.forEach(function(t) {
       textToKey(t).then(function(key) {
         deletedKeys.add(key);
-        fdb.ref('deleted/'+key).set(now());
-        fdb.ref('clips/'+key).remove();
+        fdb.ref('clipApp/deleted/'+key).set(now());
+        fdb.ref('clipApp/clips/'+key).remove();
       });
     });
   });
@@ -987,8 +1015,8 @@ function importCSV() {
         if (!items.find(function(i) { return i.text===text; })) {
           textToKey(text).then(function(key) {
             deletedKeys.delete(key);
-            fdb.ref('deleted/'+key).remove();
-            fdb.ref('clips/'+key).set({text:text,tab:tab,tabs:[tab],copies:copies,createdAt:createdAt,lastUsed:lastUsed});
+            fdb.ref('clipApp/deleted/'+key).remove();
+            fdb.ref('clipApp/clips/'+key).set({text:text,tab:tab,tabs:[tab],copies:copies,createdAt:createdAt,lastUsed:lastUsed});
           });
           items.push({text:text,tab:tab,tabs:[tab],copies:copies,createdAt:createdAt,lastUsed:lastUsed});
           added++;
