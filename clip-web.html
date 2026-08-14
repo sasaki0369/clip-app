@@ -549,16 +549,16 @@ async function saveEdit(b64orig) {
     // テキストが変わった場合：旧キーを削除して新キーで保存
     textToKey(origText).then(function(oldKey) {
       deletedKeys.add(oldKey);
-      fdb.ref('deleted/'+oldKey).set(now());
-      fdb.ref('clips/'+oldKey).remove();
+      fdb.ref('clipApp/deleted/'+oldKey).set(now());
+      fdb.ref('clipApp/clips/'+oldKey).remove();
     });
     // ローカル更新
     item.text = newText; item.tab = newTab; item.tabs = newTabs; item.memo = newMemo; item.lastUsed = now();
     // 新キーで保存
     textToKey(newText).then(function(newKey) {
       deletedKeys.delete(newKey);
-      fdb.ref('deleted/'+newKey).remove();
-      fdb.ref('clips/'+newKey).set({
+      fdb.ref('clipApp/deleted/'+newKey).remove();
+      fdb.ref('clipApp/clips/'+newKey).set({
         text: newText, tab: newTab, tabs: newTabs, memo: newMemo,
         copies: item.copies, createdAt: item.createdAt, lastUsed: item.lastUsed
       });
