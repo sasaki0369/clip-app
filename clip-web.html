@@ -240,7 +240,7 @@ const pendingAfterAuth = [];
 
 fauth.onAuthStateChanged(function(user) {
   if (user) {
-    // ログイン済み → 認証完了
+    console.log('ログイン済み:', user.email);
     authReady = true;
     document.getElementById('login-screen').style.display = 'none';
     document.getElementById('app').style.display = 'flex';
@@ -248,9 +248,17 @@ fauth.onAuthStateChanged(function(user) {
     pendingAfterAuth.forEach(function(fn) { fn(); });
     pendingAfterAuth.length = 0;
   } else {
-    // 未ログイン → ログイン画面を表示
-    document.getElementById('login-screen').style.display = 'flex';
-    document.getElementById('app').style.display = 'none';
+    console.log('未ログイン状態');
+    // getRedirectResult処理中はログイン画面を即表示しない
+    fauth.getRedirectResult().then(function(result) {
+      if (!result || !result.user) {
+        document.getElementById('login-screen').style.display = 'flex';
+        document.getElementById('app').style.display = 'none';
+      }
+    }).catch(function() {
+      document.getElementById('login-screen').style.display = 'flex';
+      document.getElementById('app').style.display = 'none';
+    });
   }
 });
 
@@ -260,9 +268,35 @@ function signInWithGoogle() {
 }
 
 // リダイレクト後の結果を処理
-fauth.getRedirectResult().catch(function(err) {
-  console.error('認証エラー:', err);
-  toast('ログインに失敗しました: ' + err.message);
+fauth.getRedirectResult().then(function(result) {
+  if (result && result.user) {
+    // リダイレクト認証成功 → onAuthStateChangedが発火するので追加処理不要
+    console.log('リダイレクト認証成功:', result.user.email);
+  }
+}).catch(function(err) {
+  console.error('認証エラー:', err.code, err.message);
+  // エラーコード別のメッセージ
+  var msg = 'ログインに失敗しました';
+  if (err.code === 'auth/unauthorized-domain') {
+    msg = 'このドメインは承認されていません。Firebase Consoleで承認済みドメインに追加してください。';
+  } else if (err.code === 'auth/popup-blocked') {
+    msg = 'ポップアップがブロックされました。';
+  } else if (err.code === 'auth/cancelled-popup-request') {
+    msg = 'ログインがキャンセルされました。';
+  } else {
+    msg = 'ログインエラー: ' + err.code + ' - ' + err.message;
+  }
+  var loginScreen = document.getElementById('login-screen');
+  if (loginScreen) {
+    var errEl = document.getElementById('login-error');
+    if (!errEl) {
+      errEl = document.createElement('p');
+      errEl.id = 'login-error';
+      errEl.style.cssText = 'color:#dc2626;font-size:13px;text-align:center;padding:0 20px;max-width:320px';
+      loginScreen.appendChild(errEl);
+    }
+    errEl.textContent = msg;
+  }
 });
 
 function whenAuthReady(fn) {
