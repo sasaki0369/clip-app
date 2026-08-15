@@ -783,7 +783,7 @@ function renderList() {
       const itemTabs = Array.isArray(i.tabs) ? i.tabs : [i.tab];
       return itemTabs.some(function(t) { return activeTabs.includes(t); });
     })
-    .filter(function(i) { return !q || i.text.toLowerCase().includes(q); })
+    .filter(function(i) { return !q || i.text.toLowerCase().includes(q) || (i.memo && i.memo.toLowerCase().includes(q)); })
     .sort(function(a,b) {
       if (sortOrder === 'copies')    return b.copies - a.copies || b.lastUsed - a.lastUsed;
       if (sortOrder === 'createdAt') return b.createdAt - a.createdAt;
