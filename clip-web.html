@@ -249,54 +249,47 @@ fauth.onAuthStateChanged(function(user) {
     pendingAfterAuth.length = 0;
   } else {
     console.log('未ログイン状態');
-    // getRedirectResult処理中はログイン画面を即表示しない
-    fauth.getRedirectResult().then(function(result) {
-      if (!result || !result.user) {
-        document.getElementById('login-screen').style.display = 'flex';
-        document.getElementById('app').style.display = 'none';
-      }
-    }).catch(function() {
-      document.getElementById('login-screen').style.display = 'flex';
-      document.getElementById('app').style.display = 'none';
-    });
+    document.getElementById('login-screen').style.display = 'flex';
+    document.getElementById('app').style.display = 'none';
   }
 });
 
 function signInWithGoogle() {
   const provider = new firebase.auth.GoogleAuthProvider();
-  fauth.signInWithRedirect(provider);
+  // Popupを優先（Safari/iPadのITP対策）、失敗したらRedirectにフォールバック
+  fauth.signInWithPopup(provider).catch(function(err) {
+    if (err.code === 'auth/popup-blocked' ||
+        err.code === 'auth/popup-closed-by-user' ||
+        err.code === 'auth/cancelled-popup-request') {
+      // ポップアップがブロックされた場合はリダイレクト方式に切り替え
+      fauth.signInWithRedirect(provider);
+    } else {
+      showLoginError(err);
+    }
+  });
 }
 
-// リダイレクト後の結果を処理
+function showLoginError(err) {
+  console.error('認証エラー:', err.code, err.message);
+  var msg = 'ログインに失敗しました';
+  if (err.code === 'auth/unauthorized-domain') {
+    msg = 'このドメインは承認されていません';
+  } else if (err.code === 'auth/network-request-failed') {
+    msg = 'ネットワークエラーが発生しました';
+  } else {
+    msg = 'ログインエラー: ' + (err.code || err.message);
+  }
+  var errEl = document.getElementById('login-error');
+  if (errEl) errEl.textContent = msg;
+}
+
+// リダイレクト方式のフォールバック結果を処理
 fauth.getRedirectResult().then(function(result) {
   if (result && result.user) {
-    // リダイレクト認証成功 → onAuthStateChangedが発火するので追加処理不要
     console.log('リダイレクト認証成功:', result.user.email);
   }
 }).catch(function(err) {
-  console.error('認証エラー:', err.code, err.message);
-  // エラーコード別のメッセージ
-  var msg = 'ログインに失敗しました';
-  if (err.code === 'auth/unauthorized-domain') {
-    msg = 'このドメインは承認されていません。Firebase Consoleで承認済みドメインに追加してください。';
-  } else if (err.code === 'auth/popup-blocked') {
-    msg = 'ポップアップがブロックされました。';
-  } else if (err.code === 'auth/cancelled-popup-request') {
-    msg = 'ログインがキャンセルされました。';
-  } else {
-    msg = 'ログインエラー: ' + err.code + ' - ' + err.message;
-  }
-  var loginScreen = document.getElementById('login-screen');
-  if (loginScreen) {
-    var errEl = document.getElementById('login-error');
-    if (!errEl) {
-      errEl = document.createElement('p');
-      errEl.id = 'login-error';
-      errEl.style.cssText = 'color:#dc2626;font-size:13px;text-align:center;padding:0 20px;max-width:320px';
-      loginScreen.appendChild(errEl);
-    }
-    errEl.textContent = msg;
-  }
+  showLoginError(err);
 });
 
 function whenAuthReady(fn) {
