@@ -134,6 +134,14 @@
   ::-webkit-scrollbar{width:4px;height:4px}
   ::-webkit-scrollbar-track{background:transparent}
   ::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+  .card-memo{font-size:11.5px;color:var(--muted);margin-top:4px;line-height:1.5;word-break:break-all;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;padding-left:8px;border-left:2px solid var(--border2)}
+  .sticky-top{position:sticky;top:0;background:var(--bg);z-index:90}
+  .fav-btn{width:32px;height:32px;background:transparent;border:none;cursor:pointer;color:var(--muted);font-size:18px;display:flex;align-items:center;justify-content:center;transition:all .15s;flex-shrink:0;padding:0}
+  .fav-btn.active{color:#f59e0b}
+  .fav-filter-btn{width:32px;height:32px;background:var(--surface);border:1px solid var(--border);border-radius:8px;cursor:pointer;color:var(--muted2);display:flex;align-items:center;justify-content:center;transition:all .15s;flex-shrink:0;font-size:16px}
+  .fav-filter-btn.active{background:#fef3c7;color:#f59e0b;border-color:#fcd34d}
+  .card-fav{display:flex;align-items:center;justify-content:center;width:28px;height:28px;background:none;border:none;cursor:pointer;font-size:16px;color:var(--muted);padding:0;transition:all .12s;flex-shrink:0}
+  .card-fav.active{color:#f59e0b}
 </style>
 </head>
 <body>
@@ -158,6 +166,7 @@
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 
 <div id="app" style="display:none">
   <header class="header">
@@ -184,14 +193,19 @@
       </button>
     </div>
   </header>
-  <div class="tabs-wrap" id="tabs-row"></div>
-  <div class="search-wrap">
-    <span class="si">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
-      </svg>
-    </span>
-    <input class="search-input" id="search" placeholder="検索…" oninput="renderList()">
+  <div class="sticky-top">
+    <div class="tabs-wrap" id="tabs-row"></div>
+    <div class="search-wrap" style="display:flex;align-items:center;gap:8px">
+      <div style="position:relative;flex:1">
+        <span class="si">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+          </svg>
+        </span>
+        <input class="search-input" id="search" placeholder="検索…" oninput="renderList()">
+      </div>
+      <button class="fav-filter-btn" id="fav-filter-btn" onclick="toggleFavFilter()" title="お気に入りのみ表示">☆</button>
+    </div>
   </div>
   <div id="list"></div>
   <div class="select-bar hidden" id="select-bar">
@@ -303,6 +317,7 @@ let items    = [];
 let settings = { retentionDays: 30, tabs: ['仕事','メモ','URL','コード'] };
 let activeTabs = ['すべて']; // 複数選択対応
 let sortOrder = localStorage.getItem('clip_sort_order') || 'copies'; // 永続化
+let favFilter = localStorage.getItem('clip_fav_filter') === '1'; // お気に入りフィルタ永続化
 let selected  = []; // textの配列
 let longTimer = null;
 let pendingText = null;
@@ -369,6 +384,7 @@ fdb.ref('clipApp/deleted').once('value', function(delSnap) {
       // memoフィールドがなければ空文字で補完
       // 必須フィールドの補完（Firebaseに存在しない場合のデフォルト値）
       if (r.memo === undefined || r.memo === null) r.memo = '';
+      if (r.fav === undefined || r.fav === null) r.fav = false;
       if (!Array.isArray(r.tabs) || r.tabs.length === 0) {
         r.tabs = r.tab ? [r.tab] : ['未分類'];
       }
@@ -615,6 +631,53 @@ function escForAttr(s) {
           .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
+// ── お気に入り ───────────────────────────────────────────────────────────────
+function toggleFav(text) {
+  const item = items.find(function(i) { return i.text === text; });
+  if (!item) return;
+  item.fav = !item.fav;
+  renderList();
+  textToKey(text).then(function(key) {
+    fdb.ref('clipApp/clips/'+key).update({ fav: item.fav });
+  });
+  toast(item.fav ? '★ お気に入りに追加' : '☆ お気に入りを解除');
+}
+
+function toggleFavFilter() {
+  favFilter = !favFilter;
+  localStorage.setItem('clip_fav_filter', favFilter ? '1' : '0');
+  const btn = document.getElementById('fav-filter-btn');
+  if (btn) {
+    btn.classList.toggle('active', favFilter);
+    btn.title = favFilter ? 'お気に入りフィルタ解除' : 'お気に入りのみ表示';
+  }
+  renderList();
+}
+
+// ── QRコード表示 ──────────────────────────────────────────────────────────────
+function showQrSheet(text) {
+  closeModal();
+  const ov = document.createElement('div');
+  ov.className = 'ov'; ov.id = 'modal-ov';
+  const preview = text.length > 50 ? text.slice(0,50)+'…' : text;
+  ov.innerHTML = '<div class="modal" style="text-align:center">'
+    + '<div class="mhandle"></div>'
+    + '<p class="mtitle">QRコード</p>'
+    + '<p style="font-size:12px;color:var(--muted);word-break:break-all;margin-bottom:16px">'+esc(preview)+'</p>'
+    + '<div id="qr-canvas" style="display:inline-block;padding:12px;background:#fff;border:1px solid var(--border);border-radius:8px;margin-bottom:16px"></div>'
+    + '<div class="mfoot"><button class="mbtn g" onclick="closeModal()">閉じる</button></div>'
+    + '</div>';
+  ov.addEventListener('click', function(e) { if (e.target === ov) closeModal(); });
+  document.body.appendChild(ov);
+  // QRコード生成
+  new QRCode(document.getElementById('qr-canvas'), {
+    text: text,
+    width: 200, height: 200,
+    colorDark: '#111111', colorLight: '#ffffff',
+    correctLevel: QRCode.CorrectLevel.M
+  });
+}
+
 // ── URL アクションシート ──────────────────────────────────────────────────────
 function showUrlActionSheet(text) {
   closeModal();
@@ -633,6 +696,9 @@ function showUrlActionSheet(text) {
     + '<button class="mbtn g" id="url-copy" style="width:100%;padding:13px;font-size:15px;text-align:left;display:flex;align-items:center;gap:10px">'
     + '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'
     + 'コピー</button>'
+    + '<button class="mbtn g" id="url-qr" style="width:100%;padding:13px;font-size:15px;text-align:left;display:flex;align-items:center;gap:10px">'
+    + '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="3" height="3"/></svg>'
+    + 'QRコードを表示</button>'
     + '</div>'
     + '<div class="mfoot"><button class="mbtn g" onclick="closeModal()">キャンセル</button></div>'
     + '</div>';
@@ -667,6 +733,11 @@ function showUrlActionSheet(text) {
   document.getElementById('url-copy').addEventListener('click', function() {
     closeModal();
     copyItemByText(text);
+  });
+
+  document.getElementById('url-qr').addEventListener('click', function() {
+    closeModal();
+    showQrSheet(text);
   });
 }
 
@@ -811,6 +882,7 @@ function renderList() {
       return itemTabs.some(function(t) { return activeTabs.includes(t); });
     })
     .filter(function(i) { return !q || i.text.toLowerCase().includes(q) || (i.memo && i.memo.toLowerCase().includes(q)); })
+    .filter(function(i) { return !favFilter || i.fav === true; })
     .sort(function(a,b) {
       if (sortOrder === 'copies')    return b.copies - a.copies || b.lastUsed - a.lastUsed;
       if (sortOrder === 'createdAt') return b.createdAt - a.createdAt;
@@ -846,7 +918,8 @@ function renderList() {
       + '<div class="card-actions">'
       + (isSel
         ? '<div class="sel-num">'+(si+1)+'</div>'
-        : '<button class="edit-btn" data-action="edit"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>'
+        : '<button class="card-fav '+(item.fav?'active':'')+'" data-action="fav" title="お気に入り">'+(item.fav?'★':'☆')+'</button>'
+        + '<button class="edit-btn" data-action="edit"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>'
         + '<button class="del-btn" data-action="del"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button>')
       + '</div></div>';
   }).join('');
@@ -863,6 +936,9 @@ function renderList() {
     card.addEventListener('pointerleave', function() { clearTimeout(longTimer); });
 
     card.addEventListener('click', function(e) {
+      if (e.target.closest('[data-action="fav"]')) {
+        e.stopPropagation(); toggleFav(text); return;
+      }
       if (e.target.closest('[data-action="del"]')) {
         e.stopPropagation(); deleteItemByText(text); return;
       }
@@ -1153,6 +1229,12 @@ setSyncStatus('busy');
 (function() {
   const btn = document.getElementById('sort-btn');
   if (btn && sortOrder !== 'copies') btn.style.color = 'var(--text)';
+  // お気に入りフィルタボタンの状態を復元
+  const favBtn = document.getElementById('fav-filter-btn');
+  if (favBtn && favFilter) {
+    favBtn.classList.add('active');
+    favBtn.title = 'お気に入りフィルタ解除';
+  }
 })();
 </script>
 </body>
