@@ -24,8 +24,8 @@
     --green:#16a34a;--red:#dc2626;
     --r:10px;--f:'Geist',system-ui,sans-serif;--m:'Geist Mono',monospace;
   }
-  html,body{background:var(--bg);color:var(--text);font-family:var(--f);font-size:14px;line-height:1.5;min-height:100dvh;-webkit-font-smoothing:antialiased}
-  #app{max-width:680px;margin:0 auto;padding:0 16px;min-height:100dvh;display:flex;flex-direction:column}
+  html{height:100%}body{background:var(--bg);color:var(--text);font-family:var(--f);font-size:14px;line-height:1.5;min-height:100%;-webkit-font-smoothing:antialiased;overflow-y:auto}
+  #app{max-width:680px;margin:0 auto;padding:0 16px;display:flex;flex-direction:column;min-height:100vh}
   .header{display:flex;align-items:center;justify-content:space-between;padding:20px 0 16px;border-bottom:1px solid var(--border);background:var(--bg);gap:12px}
   .logo{display:flex;align-items:center;gap:8px;font-size:15px;font-weight:600;letter-spacing:-.02em;color:var(--text);flex-shrink:0}
   .header-actions{display:flex;align-items:center;gap:8px}
@@ -46,7 +46,7 @@
   .search-input{width:100%;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-family:var(--f);font-size:13px;padding:9px 12px 9px 34px;outline:none;transition:border-color .15s}
   .search-input::placeholder{color:var(--muted)}
   .search-input:focus{border-color:var(--border2);background:#fff}
-  #list{flex:1;padding:8px 0 120px;display:flex;flex-direction:column;gap:2px}
+  #list{padding:8px 0 120px;display:flex;flex-direction:column;gap:2px}
   .empty{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:80px 20px;gap:8px;text-align:center}
   .empty-icon{margin-bottom:4px;opacity:.18}
   .empty-title{font-size:14px;font-weight:500;color:var(--muted2)}
