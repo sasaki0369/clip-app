@@ -858,6 +858,21 @@ function submitPaste() {
   pickTabAndSave(text);
 }
 
+// ── 検索クリア ───────────────────────────────────────────────────────────────────
+function onSearchInput() {
+  const btn = document.getElementById('search-clear');
+  const val = (document.getElementById('search') || {}).value || '';
+  if (btn) btn.classList.toggle('visible', val.length > 0);
+  renderList();
+}
+function clearSearch() {
+  const el = document.getElementById('search');
+  if (el) { el.value = ''; el.focus(); }
+  const btn = document.getElementById('search-clear');
+  if (btn) btn.classList.remove('visible');
+  renderList();
+}
+
 // ── Render Tabs ───────────────────────────────────────────────────────────────
 function renderTabs() {
   const row = document.getElementById('tabs-row');
