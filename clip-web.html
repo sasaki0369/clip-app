@@ -142,6 +142,9 @@
   .fav-filter-btn.active{background:#fef3c7;color:#f59e0b;border-color:#fcd34d}
   .card-fav{display:flex;align-items:center;justify-content:center;width:28px;height:28px;background:none;border:none;cursor:pointer;font-size:16px;color:var(--muted);padding:0;transition:all .12s;flex-shrink:0}
   .card-fav.active{color:#f59e0b}
+  .search-clear{position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--muted);padding:3px;display:none;align-items:center;justify-content:center;border-radius:4px;line-height:1}
+  .search-clear:hover{color:var(--text)}
+  .search-clear.visible{display:flex}
 </style>
 </head>
 <body>
@@ -203,7 +206,10 @@
             <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
           </svg>
         </span>
-        <input class="search-input" id="search" placeholder="検索…" oninput="renderList()">
+        <input class="search-input" id="search" placeholder="検索…" oninput="onSearchInput()" style="padding-right:32px">
+        <button class="search-clear" id="search-clear" onclick="clearSearch()" title="クリア">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
       </div>
       <button class="fav-filter-btn" id="fav-filter-btn" onclick="toggleFavFilter()" title="お気に入りのみ表示">☆</button>
     </div>
